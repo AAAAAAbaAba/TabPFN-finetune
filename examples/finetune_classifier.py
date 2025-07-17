@@ -75,7 +75,8 @@ def setup_model_and_optimizer(config: dict) -> tuple[TabPFNClassifier, Optimizer
         "inference_precision": torch.float32,
     }
     classifier = TabPFNClassifier(
-        **classifier_config, fit_mode="batched", differentiable_input=False
+        **classifier_config, fit_mode="batched", differentiable_input=False,
+        model_path="/home/fit/zhangcs/WORK/chenkq/project/ckpt/tabpfn-v2-classifier-finetuned-zk73skhh.ckpt"
     )
     classifier._initialize_model_variables()
     # Optimizer uses finetuning-specific learning rate
