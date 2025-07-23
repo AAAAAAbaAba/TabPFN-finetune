@@ -166,3 +166,4 @@ cython_debug/
 CLAUDE.md
 
 figs/
+logs/

@@ -22,6 +22,8 @@ from tabpfn.utils import meta_dataset_collator
 
 import pandas as pd
 import matplotlib.pyplot as plt
+from functools import partial
+import time
 import os
 import sys
 # 添加项目根目录到Python路径
@@ -30,21 +32,22 @@ sys.path.append(DIR_PATH)
 from utils.early_stopping import AdaptiveES
 
 
-def prepare_data(config: dict) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def prepare_data(config: dict, flag_fetch:bool = True) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Loads, subsets, and splits the California Housing dataset."""
     print("--- 1. Data Preparation ---")
-    # # Fetch Ames housing data from OpenML
-    # bike_sharing = sklearn.datasets.fetch_openml(
-    #     data_id=44973, as_frame=True, parser="auto"
-    # )
+    if flag_fetch:
+        # Fetch Ames housing data from OpenML
+        DATA = sklearn.datasets.fetch_openml(
+            data_id=44981, as_frame=True, parser="auto"
+        )
 
-    # # Separate features (X) and target (y)
-    # X_df = bike_sharing.data
-    # y_df = bike_sharing.target
-
-    DATA = pd.read_csv("/home/fit/zhangcs/WORK/lzx/TabDiff1/eval/report_runs/learnable_schedule/grid_stability/1886/samples.csv")
-    X_df = DATA.iloc[:, :-1]
-    y_df = DATA.iloc[:, -1]
+        # Separate features (X) and target (y)
+        X_df = DATA.data
+        y_df = DATA.target
+    else:
+        DATA = pd.read_csv("/home/fit/zhangcs/WORK/lzx/TabDiff1/eval/report_runs/learnable_schedule/pumadyn32nh/1316/samples.csv")
+        X_df = DATA.iloc[:, :-1]
+        y_df = DATA.iloc[:, -1]
 
     # Select only numeric features for simplicity
     X_numeric = X_df.select_dtypes(include=np.number)
@@ -118,18 +121,18 @@ def plot_results(plot_dict: dict):
     # Create dual y-axis plot
     _, ax1 = plt.subplots(figsize=(12, 6))
     ax2 = ax1.twinx()
-    plot_dict['epoch'] = range(len(plot_dict['train_loss']))
+    plot_dict['step'] = range(len(plot_dict['train_loss']))
     
     # Plot training loss (left y-axis)
     color1 = 'tab:blue'
-    ax1.plot(plot_dict['epoch'], plot_dict['train_loss'], color=color1, linewidth=3, label='Training Loss')
+    ax1.plot(plot_dict['step'], plot_dict['train_loss'], color=color1, linewidth=3, label='Training Loss')
     ax1.set_xlabel('Steps')
     ax1.set_ylabel('Training Loss', color=color1)
     ax1.tick_params(axis='y', labelcolor=color1)
     
     # Plot validation loss (right y-axis)
     color2 = 'tab:orange'
-    ax2.plot(plot_dict['epoch'], plot_dict['validation_loss'], color=color2, linewidth=3, label='Validation Loss')
+    ax2.plot(plot_dict['step'], plot_dict['validation_loss'], color=color2, linewidth=3, label='Validation Loss')
     ax2.set_ylabel('Validation Loss', color=color2)
     ax2.tick_params(axis='y', labelcolor=color2)
     
@@ -138,7 +141,7 @@ def plot_results(plot_dict: dict):
     ax1.axvline(x=best_step, color="red", linestyle="--", linewidth=2, label="Best Step")
     ax2.axhline(y=plot_dict['initial_validation_loss'], color="green", linestyle="--", linewidth=2, label="Initial Validation Loss")
     ax1.text(best_step + 0.5, ax1.get_ylim()[0] + (ax1.get_ylim()[1] - ax1.get_ylim()[0]) * 0.1, 
-             f"Best Epoch R2: {plot_dict['validation_loss'][best_step]:.4f}", color="red", ha="left", va="bottom")
+             f"Best Step R2: {plot_dict['validation_loss'][best_step]:.4f}", color="red", ha="left", va="bottom")
     ax2.text(best_step + 0.5, ax2.get_ylim()[0] + (ax2.get_ylim()[1] - ax2.get_ylim()[0]) * 0.2, 
              f"Initial R2: {plot_dict['initial_validation_loss']:.4f}", color="green", ha="left", va="bottom")
     
@@ -152,6 +155,24 @@ def plot_results(plot_dict: dict):
     plt.savefig(os.path.join(DIR_PATH, f"figs/fine_tuning_loss_plot.png"))    
 
 
+def save_log(config: dict, plot_dict: dict, total_time: list):
+    with open(os.path.join(DIR_PATH, f"logs/log.txt"), "a") as f:
+        f.write(f"--------------------------------\n")
+        f.write(f"\tnum_samples_to_use: {config['num_samples_to_use']}\n")
+        f.write(f"\tn_inference_context_samples: {config['n_inference_context_samples']}\n")
+        f.write(f"\tlearning_rate: {config['finetuning']['learning_rate']}\n")
+        f.write(f"\t----------------------------\n")
+        f.write(f"\tfinetune: {config['dataset']['finetune']}\n")
+        f.write(f"\t----------------------------\n")
+        f.write(f"\tinitial_validation_loss: {plot_dict['initial_validation_loss']}\n")
+        f.write(f"\tbest_validation_loss: {np.max(plot_dict['validation_loss'])}[step: {np.argmax(plot_dict['validation_loss'])}]\n")
+        f.write(f"\tepochs: {plot_dict['epochs']}[{int(len(plot_dict['validation_loss']) / plot_dict['epochs'])}steps/epoch]\n")
+        f.write(f"\t----------------------------\n")
+        f.write(f"\tfinetuning_time: {(total_time[-1] - total_time[0]) / (len(total_time) - 1):.2f}s/step\n")
+        f.write(f"\tinference_time: {total_time[0]:.2f}s\n")
+        f.write(f"\n\n")
+
+
 def main():
     """Main function to configure and run the finetuning workflow."""
     # --- Master Configuration ---
@@ -163,7 +184,7 @@ def main():
         # managing memory and computation time, especially with large datasets.
         # For very large datasets the entire dataset is preprocessed and then
         # fit in memory, potentially leading to OOM errors.
-        "num_samples_to_use": 100_000,
+        "num_samples_to_use": 30_000,
         # A seed for random number generators to ensure that data shuffling, splitting,
         # and model initializations are reproducible.
         "random_seed": 42,
@@ -171,7 +192,7 @@ def main():
         "valid_set_ratio": 0.3,
         # During evaluation, this is the number of samples from the training set given to the
         # model as context before it makes predictions on the test set.
-        "n_inference_context_samples": 5_000,
+        "n_inference_context_samples": 3_000,
     }
     config["finetuning"] = {
         # The total number of passes through the entire fine-tuning dataset.
@@ -192,13 +213,28 @@ def main():
     config["adptive_es"] = {
         "adaptive_rate": 0.2,
         "adaptive_offset": 5,
-        "min_patience": 5,
+        "min_patience": 10,
         "max_patience": 100,
     }
     adaptive_es = AdaptiveES(**config["adptive_es"])
+    config["dataset"] = {
+        "finetune": "sample",
+    }
 
     # --- Setup Data, Model, and Dataloader ---
-    X_train, X_test, y_train, y_test = prepare_data(config)
+    X_train_sample, X_test_sample, y_train_sample, y_test_sample = prepare_data(config, flag_fetch=False)
+    X_train_origin, X_test_origin, y_train_origin, y_test_origin = prepare_data(config, flag_fetch=True)
+    match config["dataset"]["finetune"]:
+        case "sample":
+            X_train, X_test, y_train, y_test = X_train_sample, X_test_sample, y_train_sample, y_test_sample
+        case "origin":
+            X_train, X_test, y_train, y_test = X_train_origin, X_test_origin, y_train_origin, y_test_origin
+        case "mix":
+            X_train = np.concatenate((X_train_sample, X_train_origin), axis=0)
+            X_test = np.concatenate((X_test_sample, X_test_origin), axis=0)
+            y_train = np.concatenate((y_train_sample, y_train_origin), axis=0)
+            y_test = np.concatenate((y_test_sample, y_test_origin), axis=0)
+
     regressor, regressor_config = setup_regressor(config)
 
     splitter = partial(train_test_split, test_size=config["valid_set_ratio"])
@@ -234,13 +270,17 @@ def main():
         "train_loss": [],
         "validation_loss": [],
         "initial_validation_loss": 0,
+        "epochs": 0,
     }
     best_validation_loss = -1
+    start_time = time.time()
+    total_time = []
     for epoch in range(config["finetuning"]["epochs"] + 1):
         if epoch > 0:
+            plot_dict["epochs"] += 1
+            is_best = False
             # Create a tqdm progress bar to iterate over the dataloader
             progress_bar = tqdm(finetuning_dataloader, desc=f"Finetuning Epoch {epoch}")
-            total_loss = []
             for data_batch in progress_bar:
                 optimizer.zero_grad()
                 (
@@ -270,20 +310,21 @@ def main():
 
                 # Set the postfix of the progress bar to show the current loss
                 progress_bar.set_postfix(loss=f"{loss.item():.4f}")
-                total_loss.append(loss.item())
+                plot_dict["train_loss"].append(loss.item())
+                mse, mae, r2 = evaluate_regressor(regressor, eval_config, X_train_origin, y_train_origin, X_test_origin, y_test_origin)
+                plot_dict["validation_loss"].append(r2)
+                total_time.append(time.time() - start_time)
+                if r2 > best_validation_loss:
+                    best_validation_loss = r2
+                    is_best = True
 
         # Evaluation Step (runs before finetuning and after each epoch)
-        mse, mae, r2 = evaluate_regressor(
-            regressor, eval_config, X_train, y_train, X_test, y_test
-        )
-        if epoch > 0:
-            plot_dict["validation_loss"].append(r2)
-            plot_dict["train_loss"].append(np.mean(total_loss))
         else:
+            is_best = True
+            mse, mae, r2 = evaluate_regressor(regressor, eval_config, X_train_origin, y_train_origin, X_test_origin, y_test_origin)
             plot_dict["initial_validation_loss"] = r2
-        is_best = r2 > best_validation_loss
-        if is_best:
-            best_validation_loss = r2
+            total_time.append(time.time() - start_time)
+
         early_stop_no_imp = adaptive_es.update(
             cur_round=epoch, is_best=is_best,
         )
@@ -298,6 +339,7 @@ def main():
 
     print("--- ✅ Finetuning Finished ---")
     plot_results(plot_dict)
+    save_log(config, plot_dict, total_time)
 
 
 if __name__ == "__main__":
