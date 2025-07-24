@@ -32,20 +32,20 @@ sys.path.append(DIR_PATH)
 from utils.early_stopping import AdaptiveES
 
 
-def prepare_data(config: dict, flag_fetch:bool = True) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def prepare_data(config: dict, flag_fetch: bool, data_path: str | int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Loads, subsets, and splits the California Housing dataset."""
     print("--- 1. Data Preparation ---")
     if flag_fetch:
         # Fetch Ames housing data from OpenML
         DATA = sklearn.datasets.fetch_openml(
-            data_id=44981, as_frame=True, parser="auto"
+            data_id=data_path, as_frame=True, parser="auto"
         )
 
         # Separate features (X) and target (y)
         X_df = DATA.data
         y_df = DATA.target
     else:
-        DATA = pd.read_csv("/home/fit/zhangcs/WORK/lzx/TabDiff1/eval/report_runs/learnable_schedule/pumadyn32nh/1316/samples.csv")
+        DATA = pd.read_csv(data_path)
         X_df = DATA.iloc[:, :-1]
         y_df = DATA.iloc[:, -1]
 
@@ -73,6 +73,29 @@ def prepare_data(config: dict, flag_fetch:bool = True) -> tuple[np.ndarray, np.n
     return X_train, X_test, y_train, y_test
 
 
+def prepare_data_pretrained(config: dict, data_path: str, seq_len: int) -> tuple[list[np.ndarray], list[np.ndarray]]:
+    print("--- 1. Data Preparation ---")
+    folders = [os.path.join(data_path, each_folder) for each_folder in os.listdir(data_path)]
+    X_pretrained, y_pretrained = [], []
+    for i in range(config["finetuning"]["epochs"]):
+        data = [os.path.join(folders[i], each_data) for each_data in os.listdir(folders[i])]
+        X_all, y_all = [], []
+        for each_data_path in data:
+            DATA = pd.read_csv(each_data_path)
+            X_numeric = DATA.iloc[:seq_len, :-1].select_dtypes(include=np.number).values
+            y_numeric = DATA.iloc[:seq_len, -1].values
+            X_all.append(X_numeric)
+            y_all.append(y_numeric)
+        X_pretrained.append(X_all)
+        y_pretrained.append(y_all)
+
+    print(
+        f"Loaded and split data: {X_all[0].shape[0]} train samples."
+    )
+    print("---------------------------\n")
+    return X_pretrained, y_pretrained
+
+
 def setup_regressor(config: dict) -> tuple[TabPFNRegressor, dict]:
     """Initializes the TabPFN regressor and its configuration."""
     print("--- 2. Model Setup ---")
@@ -85,7 +108,7 @@ def setup_regressor(config: dict) -> tuple[TabPFNRegressor, dict]:
     }
     regressor = TabPFNRegressor(
         **regressor_config, fit_mode="batched", differentiable_input=False,
-        model_path="/home/fit/zhangcs/WORK/chenkq/project/ckpt/tabpfn-v2-regressor.ckpt"
+        # model_path="/home/fit/zhangcs/WORK/chenkq/project/ckpt/tabpfn-v2-regressor.ckpt"
     )
 
     print(f"Using device: {config['device']}")
@@ -162,8 +185,6 @@ def save_log(config: dict, plot_dict: dict, total_time: list):
         f.write(f"\tn_inference_context_samples: {config['n_inference_context_samples']}\n")
         f.write(f"\tlearning_rate: {config['finetuning']['learning_rate']}\n")
         f.write(f"\t----------------------------\n")
-        f.write(f"\tfinetune: {config['dataset']['finetune']}\n")
-        f.write(f"\t----------------------------\n")
         f.write(f"\tinitial_validation_loss: {plot_dict['initial_validation_loss']}\n")
         f.write(f"\tbest_validation_loss: {np.max(plot_dict['validation_loss'])}[step: {np.argmax(plot_dict['validation_loss'])}]\n")
         f.write(f"\tepochs: {plot_dict['epochs']}[{int(len(plot_dict['validation_loss']) / plot_dict['epochs'])}steps/epoch]\n")
@@ -184,7 +205,7 @@ def main():
         # managing memory and computation time, especially with large datasets.
         # For very large datasets the entire dataset is preprocessed and then
         # fit in memory, potentially leading to OOM errors.
-        "num_samples_to_use": 30_000,
+        "num_samples_to_use": 10_000,
         # A seed for random number generators to ensure that data shuffling, splitting,
         # and model initializations are reproducible.
         "random_seed": 42,
@@ -192,11 +213,11 @@ def main():
         "valid_set_ratio": 0.3,
         # During evaluation, this is the number of samples from the training set given to the
         # model as context before it makes predictions on the test set.
-        "n_inference_context_samples": 3_000,
+        "n_inference_context_samples": 1_000,
     }
     config["finetuning"] = {
         # The total number of passes through the entire fine-tuning dataset.
-        "epochs": 200,
+        "epochs": 50,
         # A small learning rate is crucial for fine-tuning to avoid catastrophic forgetting.
         "learning_rate": 1.5e-6,
         # Meta Batch size for finetuning, i.e. how many datasets per batch. Must be 1 currently.
@@ -213,7 +234,7 @@ def main():
     config["adptive_es"] = {
         "adaptive_rate": 0.2,
         "adaptive_offset": 5,
-        "min_patience": 10,
+        "min_patience": 5,
         "max_patience": 100,
     }
     adaptive_es = AdaptiveES(**config["adptive_es"])
@@ -222,31 +243,39 @@ def main():
     }
 
     # --- Setup Data, Model, and Dataloader ---
-    X_train_sample, X_test_sample, y_train_sample, y_test_sample = prepare_data(config, flag_fetch=False)
-    X_train_origin, X_test_origin, y_train_origin, y_test_origin = prepare_data(config, flag_fetch=True)
-    match config["dataset"]["finetune"]:
-        case "sample":
-            X_train, X_test, y_train, y_test = X_train_sample, X_test_sample, y_train_sample, y_test_sample
-        case "origin":
-            X_train, X_test, y_train, y_test = X_train_origin, X_test_origin, y_train_origin, y_test_origin
-        case "mix":
-            X_train = np.concatenate((X_train_sample, X_train_origin), axis=0)
-            X_test = np.concatenate((X_test_sample, X_test_origin), axis=0)
-            y_train = np.concatenate((y_train_sample, y_train_origin), axis=0)
-            y_test = np.concatenate((y_test_sample, y_test_origin), axis=0)
+    # X_train_sample, X_test_sample, y_train_sample, y_test_sample = prepare_data(config, flag_fetch=False, 
+    #                                                                             data_path="/home/fit/zhangcs/WORK/lzx/TabDiff1/eval/report_runs/learnable_schedule/pumadyn32nh/1316/samples.csv")
+    X_train_origin, X_test_origin, y_train_origin, y_test_origin = prepare_data(config, flag_fetch=True, 
+                                                                                data_path=44981)
+    X_val_train_origin, X_val_test_origin, y_val_train_origin, y_val_test_origin = train_test_split(X_test_origin, y_test_origin, 
+                                                                                                   test_size=config["valid_set_ratio"], random_state=config["random_seed"])
+    X_train = [X_train_origin]
+    y_train = [y_train_origin]
+
+    X_train_pretrained, y_train_pretrained = prepare_data_pretrained(config, seq_len=X_train_origin.shape[0],
+                                                                     data_path="/home/fit/zhangcs/WORK/chenkq/project/dataset/pretrained-random")
 
     regressor, regressor_config = setup_regressor(config)
 
     splitter = partial(train_test_split, test_size=config["valid_set_ratio"])
     # Note: `max_data_size` corresponds to the finetuning `batch_size` in the config
-    training_datasets = regressor.get_preprocessed_datasets(
-        X_train, y_train, splitter, max_data_size=config["finetuning"]["batch_size"]
-    )
-    finetuning_dataloader = DataLoader(
-        training_datasets,
+    training_datasets_pretrained = [regressor.get_preprocessed_datasets(
+        X_train_pretrained[i], y_train_pretrained[i], splitter, max_data_size=config["finetuning"]["batch_size"]
+    ) for i in range(config["finetuning"]["epochs"])]
+    finetuning_dataloader_pretrained = [DataLoader(
+        training_datasets_pretrained[i],
         batch_size=config["finetuning"]["meta_batch_size"],
         collate_fn=meta_dataset_collator,
-    )
+    ) for i in range(config["finetuning"]["epochs"])]
+
+    training_datasets = [regressor.get_preprocessed_datasets(
+        X, y, splitter, max_data_size=config["finetuning"]["batch_size"]
+    ) for X, y in zip(X_train, y_train)]
+    finetuning_dataloader = [DataLoader(
+        each_training_datasets,
+        batch_size=config["finetuning"]["meta_batch_size"],
+        collate_fn=meta_dataset_collator,
+    ) for each_training_datasets in training_datasets]
 
     # Optimizer must be created AFTER get_preprocessed_datasets, which initializes the model
     optimizer = Adam(
@@ -280,50 +309,55 @@ def main():
             plot_dict["epochs"] += 1
             is_best = False
             # Create a tqdm progress bar to iterate over the dataloader
-            progress_bar = tqdm(finetuning_dataloader, desc=f"Finetuning Epoch {epoch}")
-            for data_batch in progress_bar:
-                optimizer.zero_grad()
-                (
-                    X_trains_p,
-                    X_tests_p,
-                    y_trains_p,
-                    y_test_std,
-                    cat_ixs,
-                    confs,
-                    norm_bardist,
-                    bardist,
-                    _,
-                    batch_y_test_raw,
-                ) = data_batch
+            total_loss = None
+            optimizer.zero_grad()
+            for each_finetuning_dataloader in [*finetuning_dataloader, finetuning_dataloader_pretrained[epoch-1]]:
+                progress_bar = tqdm(each_finetuning_dataloader, desc=f"Finetuning Epoch {epoch}")
+                for data_batch in progress_bar:              
+                    (
+                        X_trains_p,
+                        X_tests_p,
+                        y_trains_p,
+                        y_test_std,
+                        cat_ixs,
+                        confs,
+                        norm_bardist,
+                        bardist,
+                        _,
+                        batch_y_test_raw,
+                    ) = data_batch
 
-                regressor.normalized_bardist_ = norm_bardist[0]
-                regressor.fit_from_preprocessed(X_trains_p, y_trains_p, cat_ixs, confs)
-                logits, _, _ = regressor.forward(X_tests_p)
+                    regressor.normalized_bardist_ = norm_bardist[0]
+                    regressor.fit_from_preprocessed(X_trains_p, y_trains_p, cat_ixs, confs)
+                    logits, _, _ = regressor.forward(X_tests_p)
 
-                # For regression, the loss function is part of the preprocessed data
-                loss_fn = norm_bardist[0]
-                y_target = y_test_std
+                    # For regression, the loss function is part of the preprocessed data
+                    loss_fn = norm_bardist[0]
+                    y_target = y_test_std
 
-                loss = loss_fn(logits, y_target.to(config["device"])).mean()
-                loss.backward()
-                optimizer.step()
-
-                # Set the postfix of the progress bar to show the current loss
-                progress_bar.set_postfix(loss=f"{loss.item():.4f}")
-                plot_dict["train_loss"].append(loss.item())
-                mse, mae, r2 = evaluate_regressor(regressor, eval_config, X_train_origin, y_train_origin, X_test_origin, y_test_origin)
-                plot_dict["validation_loss"].append(r2)
-                total_time.append(time.time() - start_time)
-                if r2 > best_validation_loss:
-                    best_validation_loss = r2
-                    is_best = True
+                    loss = loss_fn(logits, y_target.to(config["device"]))
+                    total_loss = loss if total_loss is None else torch.concatenate((total_loss, loss))
+                    # loss.backward()
+                    # optimizer.step()
+            total_loss = total_loss.mean()
+            total_loss.backward()
+            optimizer.step()
+                
+            # # Set the postfix of the progress bar to show the current loss
+            # progress_bar.set_postfix(loss=f"{loss.item():.4f}")
+            plot_dict["train_loss"].append(total_loss.item())
+            total_time.append(time.time() - start_time)
 
         # Evaluation Step (runs before finetuning and after each epoch)
-        else:
-            is_best = True
-            mse, mae, r2 = evaluate_regressor(regressor, eval_config, X_train_origin, y_train_origin, X_test_origin, y_test_origin)
+        mse, mae, r2 = evaluate_regressor(regressor, eval_config, X_val_train_origin, y_val_train_origin, X_val_test_origin, y_val_test_origin)
+        is_best = r2 > best_validation_loss
+        if is_best:
+            best_validation_loss = r2
+        if epoch == 0:
             plot_dict["initial_validation_loss"] = r2
-            total_time.append(time.time() - start_time)
+        else:
+            plot_dict["validation_loss"].append(r2)
+        total_time.append(time.time() - start_time)
 
         early_stop_no_imp = adaptive_es.update(
             cur_round=epoch, is_best=is_best,
