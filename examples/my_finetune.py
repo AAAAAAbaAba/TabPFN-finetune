@@ -32,7 +32,7 @@ sys.path.append(DIR_PATH)
 from utils.early_stopping import AdaptiveES
 
 
-def prepare_data(config: dict, flag_fetch: bool, flag_test: bool, data_path: str | int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def prepare_data(config: dict, flag_fetch: bool, flag_test: bool, flag_id: bool, data_path: str | int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Loads, subsets, and splits the California Housing dataset."""
     print("--- 1. Data Preparation ---")
     if flag_fetch:
@@ -48,6 +48,9 @@ def prepare_data(config: dict, flag_fetch: bool, flag_test: bool, data_path: str
         DATA = pd.read_csv(data_path)
         X_df = DATA.iloc[:, :-1]
         y_df = DATA.iloc[:, -1]
+    
+    if flag_id:
+        X_df = X_df.iloc[:, 1:]
 
     # Select only numeric features for simplicity
     X_numeric = X_df.select_dtypes(include=np.number)
@@ -255,11 +258,11 @@ def main():
     }
 
     # --- Setup Data, Model, and Dataloader ---
-    X_train_sample, y_train_sample = prepare_data(config, flag_fetch=False, flag_test=False,
+    X_train_sample, y_train_sample = prepare_data(config, flag_fetch=False, flag_test=False, flag_id=True, 
                                                   data_path="/home/fit/zhangcs/WORK/chenkq/project/dataset/phm2016/PHM2016_4A_train.csv")
-    X_test_sample, y_test_sample = prepare_data(config, flag_fetch=False, flag_test=False,
+    X_test_sample, y_test_sample = prepare_data(config, flag_fetch=False, flag_test=False, flag_id=True, 
                                                 data_path="/home/fit/zhangcs/WORK/chenkq/project/dataset/phm2016/PHM2016_4A_test.csv")
-    X_train_origin, X_test_origin, y_train_origin, y_test_origin = prepare_data(config, flag_fetch=True, flag_test=True,
+    X_train_origin, X_test_origin, y_train_origin, y_test_origin = prepare_data(config, flag_fetch=True, flag_test=True, flag_id=False, 
                                                                                 data_path=44981)
     X_val_train_origin, X_val_test_origin, y_val_train_origin, y_val_test_origin = train_test_split(X_test_origin, y_test_origin, 
                                                                                                    test_size=config["valid_set_ratio"], random_state=config["random_seed"])
