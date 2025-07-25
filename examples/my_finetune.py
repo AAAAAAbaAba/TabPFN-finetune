@@ -32,7 +32,7 @@ sys.path.append(DIR_PATH)
 from utils.early_stopping import AdaptiveES
 
 
-def prepare_data(config: dict, flag_fetch: bool, data_path: str | int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def prepare_data(config: dict, flag_fetch: bool, flag_test: bool, data_path: str | int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Loads, subsets, and splits the California Housing dataset."""
     print("--- 1. Data Preparation ---")
     if flag_fetch:
@@ -59,29 +59,37 @@ def prepare_data(config: dict, flag_fetch: bool, data_path: str | int) -> tuple[
     indices = rng.choice(np.arange(len(y_all)), size=num_samples_to_use, replace=False)
     X, y = X_all[indices], y_all[indices]
 
-    splitter = partial(
-        train_test_split,
-        test_size=config["valid_set_ratio"],
-        random_state=config["random_seed"],
-    )
-    X_train, X_test, y_train, y_test = splitter(X, y)
+    if flag_test:
+        splitter = partial(
+            train_test_split,
+            test_size=config["valid_set_ratio"],
+            random_state=config["random_seed"],
+        )
+        X_train, X_test, y_train, y_test = splitter(X, y)
 
-    print(
-        f"Loaded and split data: {X_train.shape[0]} train, {X_test.shape[0]} test samples."
-    )
-    print("---------------------------\n")
-    return X_train, X_test, y_train, y_test
+        print(
+            f"Loaded and split data: {X_train.shape[0]} train, {X_test.shape[0]} test samples."
+        )
+        print("---------------------------\n")
+        return X_train, X_test, y_train, y_test
+    else:
+        print(
+            f"Loaded and split data: {X.shape[0]} train samples."
+        )
+        print("---------------------------\n")
+        return X, y
 
 
-def prepare_data_pretrained(config: dict, data_path: str, seq_len: int) -> tuple[list[np.ndarray], list[np.ndarray]]:
+def prepare_data_pretrained(config: dict, data_path: str, seq_len: int, batch_num: int = 8) -> tuple[list[np.ndarray], list[np.ndarray]]:
+    assert batch_num <= 8, "Max batch_num is 8."
     print("--- 1. Data Preparation ---")
     folders = [os.path.join(data_path, each_folder) for each_folder in os.listdir(data_path)]
     X_pretrained, y_pretrained = [], []
     for i in range(config["finetuning"]["epochs"]):
         data = [os.path.join(folders[i], each_data) for each_data in os.listdir(folders[i])]
         X_all, y_all = [], []
-        for each_data_path in data:
-            DATA = pd.read_csv(each_data_path)
+        for j in range(batch_num):
+            DATA = pd.read_csv(data[j])
             X_numeric = DATA.iloc[:seq_len, :-1].select_dtypes(include=np.number).values
             y_numeric = DATA.iloc[:seq_len, -1].values
             X_all.append(X_numeric)
@@ -108,7 +116,7 @@ def setup_regressor(config: dict) -> tuple[TabPFNRegressor, dict]:
     }
     regressor = TabPFNRegressor(
         **regressor_config, fit_mode="batched", differentiable_input=False,
-        # model_path="/home/fit/zhangcs/WORK/chenkq/project/ckpt/tabpfn-v2-regressor.ckpt"
+        model_path="/home/fit/zhangcs/WORK/chenkq/project/ckpt/tabpfn-v2-regressor.ckpt"
     )
 
     print(f"Using device: {config['device']}")
@@ -123,21 +131,25 @@ def evaluate_regressor(
     y_train: np.ndarray,
     X_test: np.ndarray,
     y_test: np.ndarray,
-) -> tuple[float, float, float]:
+) -> tuple[float, float, float, float, float]:
     """Evaluates the regressor's performance on the test set."""
     eval_regressor = clone_model_for_evaluation(regressor, eval_config, TabPFNRegressor)
     eval_regressor.fit(X_train, y_train)
 
     try:
         predictions = eval_regressor.predict(X_test)
+        errors = y_test - predictions
+        
         mse = mean_squared_error(y_test, predictions)
         mae = mean_absolute_error(y_test, predictions)
         r2 = r2_score(y_test, predictions)
+        max_ae = np.max(np.abs(errors))  # Maximum Absolute Error
+        std_error = np.std(errors)       # Standard Deviation of Errors
     except Exception as e:
         print(f"An error occurred during evaluation: {e}")
-        mse, mae, r2 = np.nan, np.nan, np.nan
+        mse, mae, r2, max_ae, std_error = np.nan, np.nan, np.nan, np.nan, np.nan
 
-    return mse, mae, r2
+    return mse, mae, r2, max_ae, std_error
 
 
 def plot_results(plot_dict: dict):
@@ -217,7 +229,7 @@ def main():
     }
     config["finetuning"] = {
         # The total number of passes through the entire fine-tuning dataset.
-        "epochs": 50,
+        "epochs": 400,
         # A small learning rate is crucial for fine-tuning to avoid catastrophic forgetting.
         "learning_rate": 1.5e-6,
         # Meta Batch size for finetuning, i.e. how many datasets per batch. Must be 1 currently.
@@ -234,7 +246,7 @@ def main():
     config["adptive_es"] = {
         "adaptive_rate": 0.2,
         "adaptive_offset": 5,
-        "min_patience": 5,
+        "min_patience": 10,
         "max_patience": 100,
     }
     adaptive_es = AdaptiveES(**config["adptive_es"])
@@ -243,17 +255,19 @@ def main():
     }
 
     # --- Setup Data, Model, and Dataloader ---
-    # X_train_sample, X_test_sample, y_train_sample, y_test_sample = prepare_data(config, flag_fetch=False, 
-    #                                                                             data_path="/home/fit/zhangcs/WORK/lzx/TabDiff1/eval/report_runs/learnable_schedule/pumadyn32nh/1316/samples.csv")
-    X_train_origin, X_test_origin, y_train_origin, y_test_origin = prepare_data(config, flag_fetch=True, 
+    X_train_sample, y_train_sample = prepare_data(config, flag_fetch=False, flag_test=False,
+                                                  data_path="/home/fit/zhangcs/WORK/chenkq/project/dataset/phm2016/PHM2016_4A_train.csv")
+    X_test_sample, y_test_sample = prepare_data(config, flag_fetch=False, flag_test=False,
+                                                data_path="/home/fit/zhangcs/WORK/chenkq/project/dataset/phm2016/PHM2016_4A_test.csv")
+    X_train_origin, X_test_origin, y_train_origin, y_test_origin = prepare_data(config, flag_fetch=True, flag_test=True,
                                                                                 data_path=44981)
     X_val_train_origin, X_val_test_origin, y_val_train_origin, y_val_test_origin = train_test_split(X_test_origin, y_test_origin, 
                                                                                                    test_size=config["valid_set_ratio"], random_state=config["random_seed"])
     X_train = [X_train_origin]
     y_train = [y_train_origin]
 
-    X_train_pretrained, y_train_pretrained = prepare_data_pretrained(config, seq_len=X_train_origin.shape[0],
-                                                                     data_path="/home/fit/zhangcs/WORK/chenkq/project/dataset/pretrained-random")
+    X_train_pretrained, y_train_pretrained = prepare_data_pretrained(config, seq_len=X_train_origin.shape[0], batch_num=4,
+                                                                     data_path="/home/fit/zhangcs/WORK/chenkq/project/dataset/pretrained")
 
     regressor, regressor_config = setup_regressor(config)
 
@@ -307,13 +321,12 @@ def main():
     for epoch in range(config["finetuning"]["epochs"] + 1):
         if epoch > 0:
             plot_dict["epochs"] += 1
-            is_best = False
             # Create a tqdm progress bar to iterate over the dataloader
             total_loss = None
             optimizer.zero_grad()
             for each_finetuning_dataloader in [*finetuning_dataloader, finetuning_dataloader_pretrained[epoch-1]]:
                 progress_bar = tqdm(each_finetuning_dataloader, desc=f"Finetuning Epoch {epoch}")
-                for data_batch in progress_bar:              
+                for idx, data_batch in enumerate(progress_bar):              
                     (
                         X_trains_p,
                         X_tests_p,
@@ -339,6 +352,7 @@ def main():
                     total_loss = loss if total_loss is None else torch.concatenate((total_loss, loss))
                     # loss.backward()
                     # optimizer.step()
+                print(f"已用显存: {torch.cuda.memory_allocated()/1024**2:.2f} MB")
             total_loss = total_loss.mean()
             total_loss.backward()
             optimizer.step()
@@ -349,7 +363,7 @@ def main():
             total_time.append(time.time() - start_time)
 
         # Evaluation Step (runs before finetuning and after each epoch)
-        mse, mae, r2 = evaluate_regressor(regressor, eval_config, X_val_train_origin, y_val_train_origin, X_val_test_origin, y_val_test_origin)
+        mse, mae, r2, max_ae, std_error = evaluate_regressor(regressor, eval_config, X_train_sample, y_train_sample, X_test_sample, y_test_sample)
         is_best = r2 > best_validation_loss
         if is_best:
             best_validation_loss = r2
@@ -366,7 +380,8 @@ def main():
         status = "Initial" if epoch == 0 else f"Epoch {epoch}"
         patience_left = adaptive_es.remaining_patience(cur_round=epoch)
         print(
-            f"📊 {status} Evaluation | Test MSE: {mse:.4f}, Test MAE: {mae:.4f}, Test R2: {r2:.4f} | Patience: {patience_left}\n"
+            f"📊 {status} Evaluation | Test MSE: {mse:.4f}, Test MAE: {mae:.4f}, Test R2: {r2:.4f}, Test max_AE: {max_ae:.4f}, Test std_ERR: {std_error:.4f}\
+                  | Patience: {patience_left}\n"
         )
         if early_stop_no_imp:
             break
