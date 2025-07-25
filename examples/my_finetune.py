@@ -232,7 +232,7 @@ def main():
     }
     config["finetuning"] = {
         # The total number of passes through the entire fine-tuning dataset.
-        "epochs": 400,
+        "epochs": 50,
         # A small learning rate is crucial for fine-tuning to avoid catastrophic forgetting.
         "learning_rate": 1.5e-6,
         # Meta Batch size for finetuning, i.e. how many datasets per batch. Must be 1 currently.
@@ -276,14 +276,20 @@ def main():
 
     splitter = partial(train_test_split, test_size=config["valid_set_ratio"])
     # Note: `max_data_size` corresponds to the finetuning `batch_size` in the config
-    training_datasets_pretrained = [regressor.get_preprocessed_datasets(
-        X_train_pretrained[i], y_train_pretrained[i], splitter, max_data_size=config["finetuning"]["batch_size"]
-    ) for i in range(config["finetuning"]["epochs"])]
-    finetuning_dataloader_pretrained = [DataLoader(
-        training_datasets_pretrained[i],
+    training_datasets_pretrained = [
+        [regressor.get_preprocessed_datasets(
+        X_train_pretrained[i][j], y_train_pretrained[i][j], splitter, max_data_size=config["finetuning"]["batch_size"]
+            ) for j in range(len(X_train_pretrained[i]))
+        ] for i in range(config["finetuning"]["epochs"])
+    ]
+    finetuning_dataloader_pretrained = [
+        [DataLoader(
+        training_datasets_pretrained[i][j],
         batch_size=config["finetuning"]["meta_batch_size"],
         collate_fn=meta_dataset_collator,
-    ) for i in range(config["finetuning"]["epochs"])]
+            ) for j in range(len(training_datasets_pretrained[i]))
+        ] for i in range(config["finetuning"]["epochs"])
+    ]
 
     training_datasets = [regressor.get_preprocessed_datasets(
         X, y, splitter, max_data_size=config["finetuning"]["batch_size"]
@@ -323,13 +329,14 @@ def main():
     total_time = []
     for epoch in range(config["finetuning"]["epochs"] + 1):
         if epoch > 0:
+            breakpoint()
             plot_dict["epochs"] += 1
             # Create a tqdm progress bar to iterate over the dataloader
-            total_loss = None
-            optimizer.zero_grad()
-            for each_finetuning_dataloader in [*finetuning_dataloader, finetuning_dataloader_pretrained[epoch-1]]:
-                progress_bar = tqdm(each_finetuning_dataloader, desc=f"Finetuning Epoch {epoch}")
-                for idx, data_batch in enumerate(progress_bar):              
+            progress_bar = tqdm(zip(*finetuning_dataloader, *finetuning_dataloader_pretrained[epoch-1]), desc=f"Finetuning Epoch {epoch}", total=len(finetuning_dataloader[0]),)
+            for finetuning_dataloader_tuple in progress_bar:
+                total_loss = None
+                optimizer.zero_grad()
+                for data_batch in finetuning_dataloader_tuple:              
                     (
                         X_trains_p,
                         X_tests_p,
@@ -355,15 +362,15 @@ def main():
                     total_loss = loss if total_loss is None else torch.concatenate((total_loss, loss))
                     # loss.backward()
                     # optimizer.step()
-                print(f"已用显存: {torch.cuda.memory_allocated()/1024**2:.2f} MB")
-            total_loss = total_loss.mean()
-            total_loss.backward()
-            optimizer.step()
+                progress_bar.set_postfix({"CUDA Memory": f"{torch.cuda.memory_allocated()/1024**2:.2f} MB"})
+                total_loss = total_loss.mean()
+                total_loss.backward()
+                optimizer.step()
                 
-            # # Set the postfix of the progress bar to show the current loss
-            # progress_bar.set_postfix(loss=f"{loss.item():.4f}")
-            plot_dict["train_loss"].append(total_loss.item())
-            total_time.append(time.time() - start_time)
+                # # Set the postfix of the progress bar to show the current loss
+                # progress_bar.set_postfix(loss=f"{loss.item():.4f}")
+                plot_dict["train_loss"].append(total_loss.item())
+                total_time.append(time.time() - start_time)
 
         # Evaluation Step (runs before finetuning and after each epoch)
         mse, mae, r2, max_ae, std_error = evaluate_regressor(regressor, eval_config, X_train_sample, y_train_sample, X_test_sample, y_test_sample)
@@ -384,7 +391,7 @@ def main():
         patience_left = adaptive_es.remaining_patience(cur_round=epoch)
         print(
             f"📊 {status} Evaluation | Test MSE: {mse:.4f}, Test MAE: {mae:.4f}, Test R2: {r2:.4f}, Test max_AE: {max_ae:.4f}, Test std_ERR: {std_error:.4f}\
-                  | Patience: {patience_left}\n"
+            | Patience: {patience_left}\n"
         )
         if early_stop_no_imp:
             break
