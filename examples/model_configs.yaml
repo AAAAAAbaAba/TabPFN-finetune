@@ -1,0 +1,38 @@
+ID: 1
+
+# This improved structure separates general settings from finetuning hyperparameters.
+dataset:
+  pretrained:
+    data_path: "/home/fit/zhangcs/WORK/chenkq/project/dataset/pretrained"
+    batch_num: 4
+  openml:
+    id: [44981, ]
+    name: ["pumadyn32nh", ]
+
+# The total number of samples to draw from the full dataset. This is useful for
+# managing memory and computation time, especially with large datasets.
+# For very large datasets the entire dataset is preprocessed and then
+# fit in memory, potentially leading to OOM errors.
+num_samples_to_use: 10_000
+# A seed for random number generators to ensure that data shuffling, splitting,
+# and model initializations are reproducible.
+random_seed: 42
+# The proportion of the dataset to allocate to the valid set for final evaluation.
+valid_set_ratio: 0.3
+# During evaluation, this is the number of samples from the training set given to the
+# model as context before it makes predictions on the test set.
+n_inference_context_samples: 1_000
+
+finetuning:
+  # The total number of passes through the entire fine-tuning dataset.
+  epochs: 40
+  # A small learning rate is crucial for fine-tuning to avoid catastrophic forgetting.
+  learning_rate: 1.5e-6
+  # Meta Batch size for finetuning, i.e. how many datasets per batch. Must be 1 currently.
+  meta_batch_size: 1
+
+adptive_es:
+  adaptive_rate: 0.2
+  adaptive_offset: 5
+  min_patience: 5
+  max_patience: 100

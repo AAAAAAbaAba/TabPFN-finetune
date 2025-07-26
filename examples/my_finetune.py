@@ -20,6 +20,7 @@ from tabpfn import TabPFNRegressor
 from tabpfn.finetune_utils import clone_model_for_evaluation
 from tabpfn.utils import meta_dataset_collator
 
+import yaml
 import pandas as pd
 import matplotlib.pyplot as plt
 from functools import partial
@@ -155,23 +156,83 @@ def evaluate_regressor(
     return mse, mae, r2, max_ae, std_error
 
 
-def plot_results(plot_dict: dict):
+def save_model_checkpoint(regressor: TabPFNRegressor, id: int, epoch: int):
+    """Saves the model checkpoint."""
+    ckpt_dir = os.path.join(DIR_PATH,"logs", f"ID_{id}", "ckpt")
+    if not os.path.exists(ckpt_dir):
+        os.makedirs(ckpt_dir)
+    
+    checkpoint_path = os.path.join(ckpt_dir, f"tabpfn_finetuned-ID_{id}-epoch_{epoch}.ckpt")
+    checkpoint = {}
+    checkpoint["state_dict"] = regressor.model_.state_dict()
+    checkpoint["config"] = regressor.config_
+    torch.save(checkpoint, checkpoint_path)
+    print(f"💾 Model checkpoint saved to {checkpoint_path}")
+
+
+def setup_logging(config: dict) -> tuple[object, str]:
+    """Sets up logging file and returns file object and log directory."""
+    log_dir = os.path.join(DIR_PATH,"logs", f"ID_{config['ID']}")
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+    
+    log_file = os.path.join(log_dir, f"fintuning_log-ID_{config['ID']}.txt")
+
+    def write_config(config_):
+        for k, v in config_.items():
+            if isinstance(v, dict):
+                f.write(f"{k}:\n")
+                write_config(v)
+            else:
+                f.write(f"{k}: {v}\n")
+    
+    # Write config to log file
+    with open(log_file, "a") as f:
+        f.write("=== Training Configuration ===\n")
+        write_config(config)
+        f.write("=============================\n\n")
+    
+    return log_file
+
+
+def log_epoch(log_file: str, epoch: int, mse: float, mae: float, r2: float, 
+              max_ae: float, std_error: float, patience_left: int, is_best: bool):
+    """Logs epoch information to file and console."""
+    status = "Initial" if epoch == 0 else f"Epoch {epoch}"
+    best_marker = "🌟 BEST" if is_best else ""
+    
+    log_entry = (
+        f"📊 {status} Evaluation | Test MSE: {mse:.4f}, Test MAE: {mae:.4f}, "
+        f"Test R2: {r2:.4f}, Test max_AE: {max_ae:.4f}, Test std_ERR: {std_error:.4f} | "
+        f"Patience: {patience_left} {best_marker}\n"
+    )
+    
+    # Write to log file
+    with open(log_file, "a") as f:
+        f.write(log_entry)
+    
+    # Print to console
+    print(log_entry)
+
+
+def plot_results(plot_dict: dict, id: int):
     # Create dual y-axis plot
     _, ax1 = plt.subplots(figsize=(12, 6))
     ax2 = ax1.twinx()
-    plot_dict['step'] = range(len(plot_dict['train_loss']))
+    epochs = list(range(1, plot_dict['epochs']+1))
+    print(plot_dict['train_loss'])
     
     # Plot training loss (left y-axis)
     color1 = 'tab:blue'
-    ax1.plot(plot_dict['step'], plot_dict['train_loss'], color=color1, linewidth=3, label='Training Loss')
-    ax1.set_xlabel('Steps')
+    ax1.plot(epochs, plot_dict['train_loss'], color=color1, linewidth=3, label='Training Loss')
+    ax1.set_xlabel('Epochs')
     ax1.set_ylabel('Training Loss', color=color1)
     ax1.tick_params(axis='y', labelcolor=color1)
     
     # Plot validation loss (right y-axis)
     color2 = 'tab:orange'
-    ax2.plot(plot_dict['step'], plot_dict['validation_loss'], color=color2, linewidth=3, label='Validation Loss')
-    ax2.set_ylabel('Validation Loss', color=color2)
+    ax2.plot(epochs, plot_dict['validation_loss'], color=color2, linewidth=3, label='Validation Loss')
+    ax2.set_ylabel('Validation Loss(R2)', color=color2)
     ax2.tick_params(axis='y', labelcolor=color2)
     
     # Add best step marker
@@ -179,7 +240,7 @@ def plot_results(plot_dict: dict):
     ax1.axvline(x=best_step, color="red", linestyle="--", linewidth=2, label="Best Step")
     ax2.axhline(y=plot_dict['initial_validation_loss'], color="green", linestyle="--", linewidth=2, label="Initial Validation Loss")
     ax1.text(best_step + 0.5, ax1.get_ylim()[0] + (ax1.get_ylim()[1] - ax1.get_ylim()[0]) * 0.1, 
-             f"Best Step R2: {plot_dict['validation_loss'][best_step]:.4f}", color="red", ha="left", va="bottom")
+             f"Best Epoch R2: {plot_dict['validation_loss'][best_step]:.4f}", color="red", ha="left", va="bottom")
     ax2.text(best_step + 0.5, ax2.get_ylim()[0] + (ax2.get_ylim()[1] - ax2.get_ylim()[0]) * 0.2, 
              f"Initial R2: {plot_dict['initial_validation_loss']:.4f}", color="green", ha="left", va="bottom")
     
@@ -190,87 +251,59 @@ def plot_results(plot_dict: dict):
     
     plt.tight_layout()
 
-    plt.savefig(os.path.join(DIR_PATH, f"figs/fine_tuning_loss_plot.png"))    
+    plt.savefig(os.path.join(DIR_PATH, "logs", f"ID_{id}", "finetuning_loss.png"))    
 
 
-def save_log(config: dict, plot_dict: dict, total_time: list):
-    with open(os.path.join(DIR_PATH, f"logs/log.txt"), "a") as f:
-        f.write(f"--------------------------------\n")
-        f.write(f"\tnum_samples_to_use: {config['num_samples_to_use']}\n")
-        f.write(f"\tn_inference_context_samples: {config['n_inference_context_samples']}\n")
-        f.write(f"\tlearning_rate: {config['finetuning']['learning_rate']}\n")
-        f.write(f"\t----------------------------\n")
-        f.write(f"\tinitial_validation_loss: {plot_dict['initial_validation_loss']}\n")
-        f.write(f"\tbest_validation_loss: {np.max(plot_dict['validation_loss'])}[step: {np.argmax(plot_dict['validation_loss'])}]\n")
-        f.write(f"\tepochs: {plot_dict['epochs']}[{int(len(plot_dict['validation_loss']) / plot_dict['epochs'])}steps/epoch]\n")
-        f.write(f"\t----------------------------\n")
-        f.write(f"\tfinetuning_time: {(total_time[-1] - total_time[0]) / (len(total_time) - 1):.2f}s/step\n")
-        f.write(f"\tinference_time: {total_time[0]:.2f}s\n")
-        f.write(f"\n\n")
+def save_summary(log_file: str, plot_dict: dict, total_time: list):
+    with open(log_file, "a") as f:
+        f.write(f"----------------------------\n")
+        f.write(f"initial_validation_loss: {plot_dict['initial_validation_loss']}\n")
+        f.write(f"best_validation_loss: {np.max(plot_dict['validation_loss'])}[epoch: {np.argmax(plot_dict['validation_loss'])+1}]\n")
+        f.write(f"epochs: {plot_dict['epochs']}\n")
+        f.write(f"----------------------------\n")
+        f.write(f"finetuning_time: {(total_time[-1] - total_time[0]) / (len(total_time) - 1):.2f}s/epoch\n")
+        f.write(f"inference_time: {total_time[0]:.2f}s\n")
 
 
 def main():
     """Main function to configure and run the finetuning workflow."""
     # --- Master Configuration ---
-    # This improved structure separates general settings from finetuning hyperparameters.
-    config = {
-        # Sets the computation device ('cuda' for GPU if available, otherwise 'cpu').
-        "device": "cuda" if torch.cuda.is_available() else "cpu",
-        # The total number of samples to draw from the full dataset. This is useful for
-        # managing memory and computation time, especially with large datasets.
-        # For very large datasets the entire dataset is preprocessed and then
-        # fit in memory, potentially leading to OOM errors.
-        "num_samples_to_use": 10_000,
-        # A seed for random number generators to ensure that data shuffling, splitting,
-        # and model initializations are reproducible.
-        "random_seed": 42,
-        # The proportion of the dataset to allocate to the valid set for final evaluation.
-        "valid_set_ratio": 0.3,
-        # During evaluation, this is the number of samples from the training set given to the
-        # model as context before it makes predictions on the test set.
-        "n_inference_context_samples": 1_000,
-    }
-    config["finetuning"] = {
-        # The total number of passes through the entire fine-tuning dataset.
-        "epochs": 50,
-        # A small learning rate is crucial for fine-tuning to avoid catastrophic forgetting.
-        "learning_rate": 1.5e-6,
-        # Meta Batch size for finetuning, i.e. how many datasets per batch. Must be 1 currently.
-        "meta_batch_size": 1,
-        # The number of samples within each training data split. It's capped by
-        # n_inference_context_samples to align with the evaluation setup.
-        "batch_size": int(
-            min(
-                config["n_inference_context_samples"],
-                config["num_samples_to_use"] * (1 - config["valid_set_ratio"]),
-            )
-        ),
-    }
-    config["adptive_es"] = {
-        "adaptive_rate": 0.2,
-        "adaptive_offset": 5,
-        "min_patience": 10,
-        "max_patience": 100,
-    }
+    with open(os.path.join(DIR_PATH, "examples/model_configs.yaml"), "r") as file:
+        config = yaml.safe_load(file)
+    # Sets the computation device ('cuda' for GPU if available, otherwise 'cpu').
+    config["device"] = "cuda" if torch.cuda.is_available() else "cpu"
+    # The number of samples within each training data split. It's capped by
+    # n_inference_context_samples to align with the evaluation setup.
+    config["finetuning"]["batch_size"] = int(
+        min(
+            config["n_inference_context_samples"],
+            config["num_samples_to_use"] * (1 - config["valid_set_ratio"]),
+        )
+    )
     adaptive_es = AdaptiveES(**config["adptive_es"])
-    config["dataset"] = {
-        "finetune": "sample",
-    }
+
+    # --- Setup logging ---
+    log_file = setup_logging(config)
 
     # --- Setup Data, Model, and Dataloader ---
     X_train_sample, y_train_sample = prepare_data(config, flag_fetch=False, flag_test=False, flag_id=True, 
                                                   data_path="/home/fit/zhangcs/WORK/chenkq/project/dataset/phm2016/PHM2016_4A_train.csv")
     X_test_sample, y_test_sample = prepare_data(config, flag_fetch=False, flag_test=False, flag_id=True, 
                                                 data_path="/home/fit/zhangcs/WORK/chenkq/project/dataset/phm2016/PHM2016_4A_test.csv")
-    X_train_origin, X_test_origin, y_train_origin, y_test_origin = prepare_data(config, flag_fetch=True, flag_test=True, flag_id=False, 
-                                                                                data_path=44981)
+    dataset_openml = config["dataset"]["openml"]
+    X_train, y_train = [], []
+    for each_id in dataset_openml["id"]:
+        X_train_origin, X_test_origin, y_train_origin, y_test_origin = prepare_data(config, flag_fetch=True, flag_test=True, flag_id=False, 
+                                                                                    data_path=44981)
+        X_train.append(X_train_origin)
+        y_train.append(y_train_origin)
     X_val_train_origin, X_val_test_origin, y_val_train_origin, y_val_test_origin = train_test_split(X_test_origin, y_test_origin, 
                                                                                                    test_size=config["valid_set_ratio"], random_state=config["random_seed"])
-    X_train = [X_train_origin]
-    y_train = [y_train_origin]
 
-    X_train_pretrained, y_train_pretrained = prepare_data_pretrained(config, seq_len=X_train_origin.shape[0], batch_num=4,
-                                                                     data_path="/home/fit/zhangcs/WORK/chenkq/project/dataset/pretrained")
+
+    dataset_pretrained = config["dataset"]["pretrained"]
+    X_train_pretrained, y_train_pretrained = prepare_data_pretrained(config, seq_len=X_train_origin.shape[0], batch_num=dataset_pretrained["batch_num"],
+                                                                     data_path=dataset_pretrained["data_path"])
 
     regressor, regressor_config = setup_regressor(config)
 
@@ -328,9 +361,10 @@ def main():
     start_time = time.time()
     total_time = []
     for epoch in range(config["finetuning"]["epochs"] + 1):
+        # breakpoint()
         if epoch > 0:
-            breakpoint()
             plot_dict["epochs"] += 1
+            plot_dict["train_loss"].append([])
             # Create a tqdm progress bar to iterate over the dataloader
             progress_bar = tqdm(zip(*finetuning_dataloader, *finetuning_dataloader_pretrained[epoch-1]), desc=f"Finetuning Epoch {epoch}", total=len(finetuning_dataloader[0]),)
             for finetuning_dataloader_tuple in progress_bar:
@@ -369,14 +403,15 @@ def main():
                 
                 # # Set the postfix of the progress bar to show the current loss
                 # progress_bar.set_postfix(loss=f"{loss.item():.4f}")
-                plot_dict["train_loss"].append(total_loss.item())
-                total_time.append(time.time() - start_time)
+                plot_dict["train_loss"][-1].append(total_loss.item())
+            plot_dict["train_loss"][-1] = sum(plot_dict["train_loss"][-1]) / len(plot_dict["train_loss"][-1])
 
         # Evaluation Step (runs before finetuning and after each epoch)
         mse, mae, r2, max_ae, std_error = evaluate_regressor(regressor, eval_config, X_train_sample, y_train_sample, X_test_sample, y_test_sample)
         is_best = r2 > best_validation_loss
         if is_best:
             best_validation_loss = r2
+            save_model_checkpoint(regressor, config["ID"], epoch)
         if epoch == 0:
             plot_dict["initial_validation_loss"] = r2
         else:
@@ -387,18 +422,17 @@ def main():
             cur_round=epoch, is_best=is_best,
         )
 
-        status = "Initial" if epoch == 0 else f"Epoch {epoch}"
         patience_left = adaptive_es.remaining_patience(cur_round=epoch)
-        print(
-            f"📊 {status} Evaluation | Test MSE: {mse:.4f}, Test MAE: {mae:.4f}, Test R2: {r2:.4f}, Test max_AE: {max_ae:.4f}, Test std_ERR: {std_error:.4f}\
-            | Patience: {patience_left}\n"
-        )
+        log_epoch(log_file, epoch, mse, mae, r2, max_ae, std_error, patience_left, is_best)
+        
         if early_stop_no_imp:
+            with open(log_file, "a") as f:
+                f.write("\n⚠️ Early stopping triggered!\n")
             break
 
     print("--- ✅ Finetuning Finished ---")
-    plot_results(plot_dict)
-    save_log(config, plot_dict, total_time)
+    plot_results(plot_dict, config["ID"])
+    save_summary(log_file, plot_dict, total_time)
 
 
 if __name__ == "__main__":
