@@ -178,16 +178,18 @@ def setup_logging(config: dict) -> tuple[object, str]:
     
     log_file = os.path.join(log_dir, f"fintuning_log-ID_{config['ID']}.txt")
 
-    def write_config(config_):
+    def write_config(config_, subs=0):
         for k, v in config_.items():
             if isinstance(v, dict):
+                f.write(subs * "  ")
                 f.write(f"{k}:\n")
-                write_config(v)
+                write_config(v, subs+1)
             else:
+                f.write(subs * "  ")
                 f.write(f"{k}: {v}\n")
     
     # Write config to log file
-    with open(log_file, "a") as f:
+    with open(log_file, "w") as f:
         f.write("=== Training Configuration ===\n")
         write_config(config)
         f.write("=============================\n\n")
@@ -220,7 +222,6 @@ def plot_results(plot_dict: dict, id: int):
     _, ax1 = plt.subplots(figsize=(12, 6))
     ax2 = ax1.twinx()
     epochs = list(range(1, plot_dict['epochs']+1))
-    print(plot_dict['train_loss'])
     
     # Plot training loss (left y-axis)
     color1 = 'tab:blue'
@@ -251,7 +252,7 @@ def plot_results(plot_dict: dict, id: int):
     
     plt.tight_layout()
 
-    plt.savefig(os.path.join(DIR_PATH, "logs", f"ID_{id}", "finetuning_loss.png"))    
+    plt.savefig(os.path.join(DIR_PATH, "logs", f"ID_{id}", f"finetuning_loss-ID_{id}.png"))    
 
 
 def save_summary(log_file: str, plot_dict: dict, total_time: list):
@@ -361,7 +362,6 @@ def main():
     start_time = time.time()
     total_time = []
     for epoch in range(config["finetuning"]["epochs"] + 1):
-        # breakpoint()
         if epoch > 0:
             plot_dict["epochs"] += 1
             plot_dict["train_loss"].append([])
