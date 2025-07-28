@@ -128,30 +128,30 @@ def setup_regressor(config: dict) -> tuple[TabPFNRegressor, dict]:
     return regressor, regressor_config
 
 
-def evaluate_regressor(
-    regressor: TabPFNRegressor,
-    eval_config: dict,
-    X_train: np.ndarray,
-    y_train: np.ndarray,
-    X_test: np.ndarray,
-    y_test: np.ndarray,
-) -> tuple[float, float, float, float, float]:
+def evaluate_regressor(regressor: TabPFNRegressor, eval_config: dict, X_train: list[np.ndarray], y_train: list[np.ndarray], X_test: list[np.ndarray], y_test: list[np.ndarray],
+    ) -> tuple[list[float], list[float], list[float], list[float], list[float]]:
     """Evaluates the regressor's performance on the test set."""
     eval_regressor = clone_model_for_evaluation(regressor, eval_config, TabPFNRegressor)
-    eval_regressor.fit(X_train, y_train)
+    mse, mae, r2, max_ae, std_error = [], [], [], [], []
+    for each_data in zip(X_train, y_train, X_test, y_test):
+        eval_regressor.fit(each_data[0], each_data[1])
 
-    try:
-        predictions = eval_regressor.predict(X_test)
-        errors = y_test - predictions
-        
-        mse = mean_squared_error(y_test, predictions)
-        mae = mean_absolute_error(y_test, predictions)
-        r2 = r2_score(y_test, predictions)
-        max_ae = np.max(np.abs(errors))  # Maximum Absolute Error
-        std_error = np.std(errors)       # Standard Deviation of Errors
-    except Exception as e:
-        print(f"An error occurred during evaluation: {e}")
-        mse, mae, r2, max_ae, std_error = np.nan, np.nan, np.nan, np.nan, np.nan
+        try:
+            predictions = eval_regressor.predict(each_data[2])
+            errors = each_data[3] - predictions
+            
+            mse.append(mean_squared_error(each_data[3], predictions))
+            mae.append(mean_absolute_error(each_data[3], predictions))
+            r2.append(r2_score(each_data[3], predictions))
+            max_ae.append(np.max(np.abs(errors)))
+            std_error.append(np.std(errors))
+        except Exception as e:
+            print(f"An error occurred during evaluation: {e}")
+            mse.append(np.nan)
+            mae.append(np.nan)
+            r2.append(np.nan)
+            max_ae.append(np.nan)
+            std_error.append(np.nan)
 
     return mse, mae, r2, max_ae, std_error
 
@@ -197,17 +197,18 @@ def setup_logging(config: dict) -> tuple[object, str]:
     return log_file
 
 
-def log_epoch(log_file: str, epoch: int, mse: float, mae: float, r2: float, 
-              max_ae: float, std_error: float, patience_left: int, is_best: bool):
+def log_epoch(config: dict, log_file: str, epoch: int, mse: list[float], mae: list[float], r2: list[float], 
+              max_ae: list[float], std_error: list[float], patience_left: int, is_best: bool):
     """Logs epoch information to file and console."""
     status = "Initial" if epoch == 0 else f"Epoch {epoch}"
     best_marker = "🌟 BEST" if is_best else ""
-    
-    log_entry = (
-        f"📊 {status} Evaluation | Test MSE: {mse:.4f}, Test MAE: {mae:.4f}, "
-        f"Test R2: {r2:.4f}, Test max_AE: {max_ae:.4f}, Test std_ERR: {std_error:.4f} | "
-        f"Patience: {patience_left} {best_marker}\n"
-    )
+    log_entry = f"📊 {status} Evaluation | Patience: {patience_left} {best_marker}\n"
+
+    for idx, each_dataset in enumerate(config["dataset"]["evaluate"].keys()):
+        log_entry += (
+            f"  {each_dataset:<10} | Test MSE: {mse[idx]:.4f}, Test MAE: {mae[idx]:.4f}, "
+            f"Test R2: {r2[idx]:.4f}, Test max_AE: {max_ae[idx]:.4f}, Test std_ERR: {std_error[idx]:.4f}\n"
+        )
     
     # Write to log file
     with open(log_file, "a") as f:
@@ -287,23 +288,28 @@ def main():
     log_file = setup_logging(config)
 
     # --- Setup Data, Model, and Dataloader ---
-    X_train_sample, y_train_sample = prepare_data(config, flag_fetch=False, flag_test=False, flag_id=True, 
-                                                  data_path="/home/fit/zhangcs/WORK/chenkq/project/dataset/phm2016/PHM2016_4A_train.csv")
-    X_test_sample, y_test_sample = prepare_data(config, flag_fetch=False, flag_test=False, flag_id=True, 
-                                                data_path="/home/fit/zhangcs/WORK/chenkq/project/dataset/phm2016/PHM2016_4A_test.csv")
+    dataset_evaluate = config["dataset"]["evaluate"]
+    X_evaluate_train, y_evaluate_train, X_evaluate_test, y_evaluate_test = [], [], [], []
+    for each_dataset in dataset_evaluate.keys():
+        X_eval, y_eval = prepare_data(config, flag_fetch=False, flag_test=False, flag_id=True, 
+                                                  data_path=dataset_evaluate[each_dataset]["train"])
+        X_evaluate_train.append(X_eval)
+        y_evaluate_train.append(y_eval)
+        X_eval, y_eval = prepare_data(config, flag_fetch=False, flag_test=False, flag_id=True, 
+                                                    data_path=dataset_evaluate[each_dataset]["test"])
+        X_evaluate_test.append(X_eval)
+        y_evaluate_test.append(y_eval)
     dataset_openml = config["dataset"]["openml"]
     X_train, y_train = [], []
     for each_id in dataset_openml["id"]:
-        X_train_origin, X_test_origin, y_train_origin, y_test_origin = prepare_data(config, flag_fetch=True, flag_test=True, flag_id=False, 
-                                                                                    data_path=44981)
-        X_train.append(X_train_origin)
-        y_train.append(y_train_origin)
-    X_val_train_origin, X_val_test_origin, y_val_train_origin, y_val_test_origin = train_test_split(X_test_origin, y_test_origin, 
-                                                                                                   test_size=config["valid_set_ratio"], random_state=config["random_seed"])
+        X_openml_train, _, y_openml_train, _ = prepare_data(config, flag_fetch=True, flag_test=True, flag_id=False, 
+                                                                                    data_path=each_id)
+        X_train.append(X_openml_train)
+        y_train.append(y_openml_train)
 
 
     dataset_pretrained = config["dataset"]["pretrained"]
-    X_train_pretrained, y_train_pretrained = prepare_data_pretrained(config, seq_len=X_train_origin.shape[0], batch_num=dataset_pretrained["batch_num"],
+    X_train_pretrained, y_train_pretrained = prepare_data_pretrained(config, seq_len=X_openml_train.shape[0], batch_num=dataset_pretrained["batch_num"],
                                                                      data_path=dataset_pretrained["data_path"])
 
     regressor, regressor_config = setup_regressor(config)
@@ -407,15 +413,15 @@ def main():
             plot_dict["train_loss"][-1] = sum(plot_dict["train_loss"][-1]) / len(plot_dict["train_loss"][-1])
 
         # Evaluation Step (runs before finetuning and after each epoch)
-        mse, mae, r2, max_ae, std_error = evaluate_regressor(regressor, eval_config, X_train_sample, y_train_sample, X_test_sample, y_test_sample)
-        is_best = r2 > best_validation_loss
+        mse, mae, r2, max_ae, std_error = evaluate_regressor(regressor, eval_config, X_evaluate_train, y_evaluate_train, X_evaluate_test, y_evaluate_test)
+        is_best = r2[0] > best_validation_loss
         if is_best:
-            best_validation_loss = r2
+            best_validation_loss = r2[0]
             save_model_checkpoint(regressor, config["ID"], epoch)
         if epoch == 0:
-            plot_dict["initial_validation_loss"] = r2
+            plot_dict["initial_validation_loss"] = r2[0]
         else:
-            plot_dict["validation_loss"].append(r2)
+            plot_dict["validation_loss"].append(r2[0])
         total_time.append(time.time() - start_time)
 
         early_stop_no_imp = adaptive_es.update(
@@ -423,7 +429,7 @@ def main():
         )
 
         patience_left = adaptive_es.remaining_patience(cur_round=epoch)
-        log_epoch(log_file, epoch, mse, mae, r2, max_ae, std_error, patience_left, is_best)
+        log_epoch(config, log_file, epoch, mse, mae, r2, max_ae, std_error, patience_left, is_best)
         
         if early_stop_no_imp:
             with open(log_file, "a") as f:

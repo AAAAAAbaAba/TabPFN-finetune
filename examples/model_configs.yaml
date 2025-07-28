@@ -8,6 +8,16 @@ dataset:
   openml:
     id: [44981, ]
     name: ["pumadyn32nh", ]
+  evaluate:
+    4A:
+      train: "/home/fit/zhangcs/WORK/chenkq/project/dataset/phm2016/PHM2016_4A_train.csv"
+      test: "/home/fit/zhangcs/WORK/chenkq/project/dataset/phm2016/PHM2016_4A_test.csv"
+    4B:
+      train: "/home/fit/zhangcs/WORK/chenkq/project/dataset/phm2016/PHM2016_4B_train.csv"
+      test: "/home/fit/zhangcs/WORK/chenkq/project/dataset/phm2016/PHM2016_4B_test.csv"
+    zhengqi:
+      train: "/home/fit/zhangcs/WORK/chenkq/project/dataset/zhengqi/zhengqi_train.csv"
+      test: "/home/fit/zhangcs/WORK/chenkq/project/dataset/zhengqi/zhengqi_test.csv"
 
 # The total number of samples to draw from the full dataset. This is useful for
 # managing memory and computation time, especially with large datasets.
