@@ -1,4 +1,4 @@
-ID: 1
+ID: 15
 
 # This improved structure separates general settings from finetuning hyperparameters.
 dataset:
@@ -6,8 +6,16 @@ dataset:
     data_path: "/home/fit/zhangcs/WORK/chenkq/project/dataset/pretrained"
     batch_num: 4
   openml:
-    id: [44981, ]
-    name: ["pumadyn32nh", ]
+    source: []
+    # 44981["/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/pumadyn32nh_44981.csv"], 
+    # 44973["/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/grid_stability_44973.csv"], 
+    # 44978["/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/cpu_activity_44978.csv"], 
+    # 44980["/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/kin8nm_44980.csv"], 
+    # 422["/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/topo_2_1_422.csv"], 
+    # 416["/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/yprop_4_1_416.csv"], 
+    name: ["pumadyn32nh", "grid_stability", ]  # "pumadyn32nh", "grid_stability", "cpu_activity", "kin8nm", "topo_2_1", "yprop_4_1", 
+    features: []  # 32, 12, 21, 8, 266, 251, 
+    samples: []  # 8192, 10000, 8192, 8192, 8885, 8885
   evaluate:
     4A:
       train: "/home/fit/zhangcs/WORK/chenkq/project/dataset/phm2016/PHM2016_4A_train.csv"
@@ -18,12 +26,15 @@ dataset:
     zhengqi:
       train: "/home/fit/zhangcs/WORK/chenkq/project/dataset/zhengqi/zhengqi_train.csv"
       test: "/home/fit/zhangcs/WORK/chenkq/project/dataset/zhengqi/zhengqi_test.csv"
+    guangfu:
+      train: "/home/fit/zhangcs/WORK/chenkq/project/dataset/guangfu/guangfu_train.csv"
+      test:  "/home/fit/zhangcs/WORK/chenkq/project/dataset/guangfu/guangfu_test.csv"
 
 # The total number of samples to draw from the full dataset. This is useful for
 # managing memory and computation time, especially with large datasets.
 # For very large datasets the entire dataset is preprocessed and then
 # fit in memory, potentially leading to OOM errors.
-num_samples_to_use: 10_000
+num_samples_to_use: 8_000
 # A seed for random number generators to ensure that data shuffling, splitting,
 # and model initializations are reproducible.
 random_seed: 42
@@ -35,7 +46,7 @@ n_inference_context_samples: 1_000
 
 finetuning:
   # The total number of passes through the entire fine-tuning dataset.
-  epochs: 40
+  epochs: 50
   # A small learning rate is crucial for fine-tuning to avoid catastrophic forgetting.
   learning_rate: 1.5e-6
   # Meta Batch size for finetuning, i.e. how many datasets per batch. Must be 1 currently.
@@ -44,5 +55,6 @@ finetuning:
 adptive_es:
   adaptive_rate: 0.2
   adaptive_offset: 5
+  min_patience: 5
   min_patience: 5
   max_patience: 100

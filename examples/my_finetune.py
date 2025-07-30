@@ -33,20 +33,20 @@ sys.path.append(DIR_PATH)
 from utils.early_stopping import AdaptiveES
 
 
-def prepare_data(config: dict, flag_fetch: bool, flag_test: bool, flag_id: bool, data_path: str | int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def prepare_data(config: dict, flag_test: bool, flag_id: bool, data_source: str | int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Loads, subsets, and splits the California Housing dataset."""
     print("--- 1. Data Preparation ---")
-    if flag_fetch:
+    if isinstance(data_source, int):
         # Fetch Ames housing data from OpenML
         DATA = sklearn.datasets.fetch_openml(
-            data_id=data_path, as_frame=True, parser="auto"
+            data_id=data_source, as_frame=True, parser="auto"
         )
 
         # Separate features (X) and target (y)
         X_df = DATA.data
         y_df = DATA.target
     else:
-        DATA = pd.read_csv(data_path)
+        DATA = pd.read_csv(data_source)
         X_df = DATA.iloc[:, :-1]
         y_df = DATA.iloc[:, -1]
     
@@ -198,16 +198,16 @@ def setup_logging(config: dict) -> tuple[object, str]:
 
 
 def log_epoch(config: dict, log_file: str, epoch: int, mse: list[float], mae: list[float], r2: list[float], 
-              max_ae: list[float], std_error: list[float], patience_left: int, is_best: bool):
+              max_ae: list[float], std_error: list[float], patience_left: int, is_best: list[bool]):
     """Logs epoch information to file and console."""
     status = "Initial" if epoch == 0 else f"Epoch {epoch}"
-    best_marker = "🌟 BEST" if is_best else ""
-    log_entry = f"📊 {status} Evaluation | Patience: {patience_left} {best_marker}\n"
+    log_entry = f"📊 {status} Evaluation | Patience: {patience_left}\n"
 
     for idx, each_dataset in enumerate(config["dataset"]["evaluate"].keys()):
+        best_marker = "🌟 BEST" if is_best[idx] else ""
         log_entry += (
-            f"  {each_dataset:<10} | Test MSE: {mse[idx]:.4f}, Test MAE: {mae[idx]:.4f}, "
-            f"Test R2: {r2[idx]:.4f}, Test max_AE: {max_ae[idx]:.4f}, Test std_ERR: {std_error[idx]:.4f}\n"
+            f"  {each_dataset:<10} | Test MSE: {mse[idx]:>7.4f}, Test MAE: {mae[idx]:>7.4f}, "
+            f"Test R2: {r2[idx]:>7.4f}, Test max_AE: {max_ae[idx]:>7.4f}, Test std_ERR: {std_error[idx]:>7.4f} | {best_marker}\n"
         )
     
     # Write to log file
@@ -291,25 +291,28 @@ def main():
     dataset_evaluate = config["dataset"]["evaluate"]
     X_evaluate_train, y_evaluate_train, X_evaluate_test, y_evaluate_test = [], [], [], []
     for each_dataset in dataset_evaluate.keys():
-        X_eval, y_eval = prepare_data(config, flag_fetch=False, flag_test=False, flag_id=True, 
-                                                  data_path=dataset_evaluate[each_dataset]["train"])
+        X_eval, y_eval = prepare_data(config, flag_test=False, flag_id=True, 
+                                      data_source=dataset_evaluate[each_dataset]["train"])
         X_evaluate_train.append(X_eval)
         y_evaluate_train.append(y_eval)
-        X_eval, y_eval = prepare_data(config, flag_fetch=False, flag_test=False, flag_id=True, 
-                                                    data_path=dataset_evaluate[each_dataset]["test"])
+        X_eval, y_eval = prepare_data(config, flag_test=False, flag_id=True, 
+                                      data_source=dataset_evaluate[each_dataset]["test"])
         X_evaluate_test.append(X_eval)
         y_evaluate_test.append(y_eval)
     dataset_openml = config["dataset"]["openml"]
     X_train, y_train = [], []
-    for each_id in dataset_openml["id"]:
-        X_openml_train, _, y_openml_train, _ = prepare_data(config, flag_fetch=True, flag_test=True, flag_id=False, 
-                                                                                    data_path=each_id)
+    for each_source in dataset_openml["source"]:
+        X_openml_train, y_openml_train = prepare_data(config, flag_test=False, flag_id=False, 
+                                                              data_source=each_source)
+        batch_len_num = X_openml_train.shape[0] // config["finetuning"]["batch_size"]
+        X_openml_train = X_openml_train[:batch_len_num * config["finetuning"]["batch_size"],...]
+        y_openml_train = y_openml_train[:batch_len_num * config["finetuning"]["batch_size"],...]
         X_train.append(X_openml_train)
         y_train.append(y_openml_train)
 
 
     dataset_pretrained = config["dataset"]["pretrained"]
-    X_train_pretrained, y_train_pretrained = prepare_data_pretrained(config, seq_len=X_openml_train.shape[0], batch_num=dataset_pretrained["batch_num"],
+    X_train_pretrained, y_train_pretrained = prepare_data_pretrained(config, seq_len=config["num_samples_to_use"], batch_num=dataset_pretrained["batch_num"],
                                                                      data_path=dataset_pretrained["data_path"])
 
     regressor, regressor_config = setup_regressor(config)
@@ -364,7 +367,7 @@ def main():
         "initial_validation_loss": 0,
         "epochs": 0,
     }
-    best_validation_loss = -1
+    best_validation_loss = [-1 for _ in range(len(dataset_evaluate))]
     start_time = time.time()
     total_time = []
     for epoch in range(config["finetuning"]["epochs"] + 1):
@@ -414,9 +417,15 @@ def main():
 
         # Evaluation Step (runs before finetuning and after each epoch)
         mse, mae, r2, max_ae, std_error = evaluate_regressor(regressor, eval_config, X_evaluate_train, y_evaluate_train, X_evaluate_test, y_evaluate_test)
-        is_best = r2[0] > best_validation_loss
-        if is_best:
-            best_validation_loss = r2[0]
+        is_best = []
+        for idx, each_r2 in enumerate(r2):
+            if each_r2 > best_validation_loss[idx]:
+                is_best.append(True)
+                best_validation_loss[idx] = each_r2
+            else:
+                is_best.append(False)
+        any_best = np.array(is_best).any()
+        if any_best:
             save_model_checkpoint(regressor, config["ID"], epoch)
         if epoch == 0:
             plot_dict["initial_validation_loss"] = r2[0]
@@ -425,7 +434,7 @@ def main():
         total_time.append(time.time() - start_time)
 
         early_stop_no_imp = adaptive_es.update(
-            cur_round=epoch, is_best=is_best,
+            cur_round=epoch, is_best=any_best,
         )
 
         patience_left = adaptive_es.remaining_patience(cur_round=epoch)

@@ -167,3 +167,5 @@ CLAUDE.md
 
 figs/
 logs/
+stderr.ckq
+stdout.ckq
