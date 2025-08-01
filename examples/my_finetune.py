@@ -102,7 +102,7 @@ def prepare_data_pretrained(config: dict, data_path: str, seq_len: int, batch_nu
         y_pretrained.append(y_all)
 
     print(
-        f"Loaded and split data: {X_all[0].shape[0]} train samples."
+        f"Loaded and split data: {X_all[0].shape[0] if X_all else 0} train samples."
     )
     print("---------------------------\n")
     return X_pretrained, y_pretrained
@@ -375,7 +375,10 @@ def main():
             plot_dict["epochs"] += 1
             plot_dict["train_loss"].append([])
             # Create a tqdm progress bar to iterate over the dataloader
-            progress_bar = tqdm(zip(*finetuning_dataloader, *finetuning_dataloader_pretrained[epoch-1]), desc=f"Finetuning Epoch {epoch}", total=len(finetuning_dataloader[0]),)
+            assert finetuning_dataloader or finetuning_dataloader_pretrained, "Dataloader!!!"
+            len_pb = len(finetuning_dataloader[0]) if finetuning_dataloader else len(finetuning_dataloader_pretrained[0][0])
+            progress_bar = tqdm(zip(*finetuning_dataloader, *finetuning_dataloader_pretrained[epoch-1]), 
+                                desc=f"Finetuning Epoch {epoch}", total=len_pb,)
             for finetuning_dataloader_tuple in progress_bar:
                 total_loss = None
                 optimizer.zero_grad()
