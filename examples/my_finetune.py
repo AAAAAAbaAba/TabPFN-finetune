@@ -19,6 +19,7 @@ from tqdm import tqdm
 from tabpfn import TabPFNRegressor
 from tabpfn.finetune_utils import clone_model_for_evaluation
 from tabpfn.utils import meta_dataset_collator
+from tabpfn.model.loading import load_model
 
 import yaml
 import pandas as pd
@@ -33,7 +34,7 @@ sys.path.append(DIR_PATH)
 from utils.early_stopping import AdaptiveES
 
 
-def prepare_data(config: dict, flag_test: bool, flag_id: bool, data_source: str | int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def prepare_data(config: dict, flag_test: bool, flag_id: bool, data_source: str | int, test_size: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Loads, subsets, and splits the California Housing dataset."""
     print("--- 1. Data Preparation ---")
     if isinstance(data_source, int):
@@ -64,9 +65,11 @@ def prepare_data(config: dict, flag_test: bool, flag_id: bool, data_source: str 
     X, y = X_all[indices], y_all[indices]
 
     if flag_test:
+        if test_size==0:
+            test_size = config["valid_set_ratio"]
         splitter = partial(
             train_test_split,
-            test_size=config["valid_set_ratio"],
+            test_size=test_size,
             random_state=config["random_seed"],
         )
         X_train, X_test, y_train, y_test = splitter(X, y)
@@ -120,7 +123,7 @@ def setup_regressor(config: dict) -> tuple[TabPFNRegressor, dict]:
     }
     regressor = TabPFNRegressor(
         **regressor_config, fit_mode="batched", differentiable_input=False,
-        model_path="/home/fit/zhangcs/WORK/chenkq/project/ckpt/tabpfn-v2-regressor.ckpt"
+        model_path=config["model_path"]
     )
 
     print(f"Using device: {config['device']}")
@@ -164,8 +167,20 @@ def save_model_checkpoint(regressor: TabPFNRegressor, id: int, epoch: int):
     
     checkpoint_path = os.path.join(ckpt_dir, f"tabpfn_finetuned-ID_{id}-epoch_{epoch}.ckpt")
     checkpoint = {}
+
+    def make_serializable(config_sample):
+        if isinstance(config_sample, dict):
+            config_sample = {k: make_serializable(config_sample[k]) for k in config_sample}
+        if isinstance(config_sample, list):
+            config_sample = [make_serializable(v) for v in config_sample]
+        if callable(config_sample):
+            config_sample = str(config_sample)
+        return config_sample
+    
     checkpoint["state_dict"] = regressor.model_.state_dict()
-    checkpoint["config"] = regressor.config_
+    checkpoint["state_dict"].update({"criterion.borders": regressor.bardist_.borders, 
+                                     "criterion.losses_per_bucket": regressor.bardist_.losses_per_bucket})
+    checkpoint["config"] = make_serializable(regressor.config_)
     torch.save(checkpoint, checkpoint_path)
     print(f"💾 Model checkpoint saved to {checkpoint_path}")
 
@@ -291,25 +306,31 @@ def main():
     dataset_evaluate = config["dataset"]["evaluate"]
     X_evaluate_train, y_evaluate_train, X_evaluate_test, y_evaluate_test = [], [], [], []
     for each_dataset in dataset_evaluate.keys():
-        X_eval, y_eval = prepare_data(config, flag_test=False, flag_id=True, 
-                                      data_source=dataset_evaluate[each_dataset]["train"])
-        X_evaluate_train.append(X_eval)
-        y_evaluate_train.append(y_eval)
-        X_eval, y_eval = prepare_data(config, flag_test=False, flag_id=True, 
-                                      data_source=dataset_evaluate[each_dataset]["test"])
-        X_evaluate_test.append(X_eval)
-        y_evaluate_test.append(y_eval)
+        if isinstance(dataset_evaluate[each_dataset]["test"], str):
+            X_eval_train, y_eval_train = prepare_data(config, flag_test=False, flag_id=dataset_evaluate[each_dataset]["flag_id"], 
+                                                      data_source=dataset_evaluate[each_dataset]["train"])
+            
+            X_eval_test, y_eval_test = prepare_data(config, flag_test=False, flag_id=dataset_evaluate[each_dataset]["flag_id"], 
+                                                    data_source=dataset_evaluate[each_dataset]["test"])
+        else:
+            X_eval_train, X_eval_test, y_eval_train, y_eval_test = prepare_data(config, flag_test=True, test_size=dataset_evaluate[each_dataset]["test"], 
+                                                                                flag_id=dataset_evaluate[each_dataset]["flag_id"],
+                                                                                data_source=dataset_evaluate[each_dataset]["train"])
+        X_evaluate_train.append(X_eval_train)
+        y_evaluate_train.append(y_eval_train)
+        X_evaluate_test.append(X_eval_test)
+        y_evaluate_test.append(y_eval_test)
+
     dataset_openml = config["dataset"]["openml"]
     X_train, y_train = [], []
-    for each_source in dataset_openml["source"]:
-        X_openml_train, y_openml_train = prepare_data(config, flag_test=False, flag_id=False, 
+    for each_source, each_flag_id in zip(dataset_openml["source"], dataset_openml["flag_id"]):
+        X_openml_train, y_openml_train = prepare_data(config, flag_test=False, flag_id=each_flag_id, 
                                                               data_source=each_source)
         batch_len_num = X_openml_train.shape[0] // config["finetuning"]["batch_size"]
         X_openml_train = X_openml_train[:batch_len_num * config["finetuning"]["batch_size"],...]
         y_openml_train = y_openml_train[:batch_len_num * config["finetuning"]["batch_size"],...]
         X_train.append(X_openml_train)
         y_train.append(y_openml_train)
-
 
     dataset_pretrained = config["dataset"]["pretrained"]
     X_train_pretrained, y_train_pretrained = prepare_data_pretrained(config, seq_len=config["num_samples_to_use"], batch_num=dataset_pretrained["batch_num"],
@@ -344,6 +365,7 @@ def main():
     ) for each_training_datasets in training_datasets]
 
     # Optimizer must be created AFTER get_preprocessed_datasets, which initializes the model
+    regressor.config_ = torch.load(config["model_path"], map_location="cpu", weights_only=None)["config"]
     optimizer = Adam(
         regressor.model_.parameters(), lr=config["finetuning"]["learning_rate"]
     )
