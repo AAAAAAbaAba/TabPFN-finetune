@@ -19,7 +19,7 @@ from tqdm import tqdm
 from tabpfn import TabPFNRegressor
 from tabpfn.finetune_utils import clone_model_for_evaluation
 from tabpfn.utils import meta_dataset_collator
-from tabpfn.model.loading import load_model
+from tabpfn.model_loading import load_model
 
 import yaml
 import pandas as pd

@@ -1,4 +1,4 @@
-ID: 11
+ID: test
 
 # This improved structure separates general settings from finetuning hyperparameters.
 dataset:
@@ -6,8 +6,8 @@ dataset:
     data_path: "/home/fit/zhangcs/WORK/chenkq/project/dataset/pretrained"
     batch_num: 4
   openml:
-    source: ["/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/yprop_4_1_416.csv"]
-    flag_id: [True, ]
+    source: ["/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/topo_2_1_422.csv", "/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/yprop_4_1_416.csv"]
+    flag_id: [True, True]
     # 44981["/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/pumadyn32nh_44981.csv"], 
     # 44973["/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/grid_stability_44973.csv"], 
     # 44978["/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/cpu_activity_44978.csv"], 
@@ -18,8 +18,8 @@ dataset:
     features: []  # 32, 12, 21, 8, 266, 251, 
     samples: []  # 8192, 10000, 8192, 8192, 8885, 8885
   evaluate:
-    # topo_2_1:
-    #   train: "/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/topo_2_1_422_test_after_6000.csv"
+    # kin8nm_44980:
+    #   train: "/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/kin8nm_44980_test_after_6000.csv"
     #   test: 0.3
     #   flag_id: True
     4A:
