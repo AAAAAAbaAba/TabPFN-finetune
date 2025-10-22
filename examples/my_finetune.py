@@ -13,6 +13,7 @@ import torch
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
 from torch.optim import Adam
+from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -27,11 +28,111 @@ import matplotlib.pyplot as plt
 from functools import partial
 import time
 import os
+import math
 import sys
 # 添加项目根目录到Python路径
 DIR_PATH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(DIR_PATH)
 from utils.early_stopping import AdaptiveES
+
+
+def create_layered_optimizer(model, layer_lr_config: dict) -> torch.optim.Adam:
+    """创建分层学习率的优化器
+    
+    Args:
+        model: TabPFN模型
+        layer_lr_config: 分层学习率配置字典
+        
+    Returns:
+        配置好的Adam优化器
+    """
+    import re
+
+    # 直接构建参数组
+    original_param_groups = []
+    new_param_groups = []
+    transformer_params = {}
+    other_params = []
+    
+    # 创建层索引到层类别和学习率的映射
+    transformer_layer_map = {}
+    if "transformer_encoder" in layer_lr_config:
+        for layer_type, config in layer_lr_config["transformer_encoder"].items():
+            transformer_params[layer_type] = []
+            for layer_idx in config["layers"]:
+                transformer_layer_map[layer_idx] = {"layer_type": layer_type, "learning_rate": config["learning_rate"]}
+    
+    # 分类参数
+    layer_pattern = re.compile(r"transformer_encoder\.layers\.(\d+)\.")
+    for name, param in model.named_parameters():
+        match = layer_pattern.search(name)
+        if match:
+            layer_idx = int(match.group(1))
+            transformer_params[transformer_layer_map[layer_idx]["layer_type"]].append(param)
+        else:
+            other_params.append(param)
+    
+    # 添加transformer层参数组
+    for layer_type, params in transformer_params.items():
+        lr = layer_lr_config["transformer_encoder"][layer_type].get("learning_rate", layer_lr_config.get("default_lr", 1e-6))
+        temp_params_dict = {
+            "params": params,
+            "lr": lr,
+            "name": f"transformer_layer_{layer_type}"
+        }
+        if layer_type == "new":
+            new_param_groups.append(temp_params_dict)
+        else:
+            original_param_groups.append(temp_params_dict)
+    
+    # 添加其他层参数组
+    if other_params:
+        other_lr = layer_lr_config.get("other_layers", layer_lr_config.get("default_lr", 1e-6))
+        original_param_groups.append({
+            "params": other_params,
+            "lr": other_lr,
+            "name": "other_layers"
+        })
+    
+    # 如果没有参数组，使用默认学习率
+    if not original_param_groups:
+        original_param_groups.append({
+            "params": list(model.parameters()), 
+            "lr": layer_lr_config.get("default_lr", 1e-6)
+        })
+    
+    original_optimizer = torch.optim.Adam(original_param_groups)
+    new_optimizer = torch.optim.Adam(new_param_groups) if new_param_groups else None
+    
+    # 打印参数组信息
+    print("--- 分层学习率优化器配置 ---")
+    for i, group in enumerate(original_param_groups + new_param_groups):
+        print(f"参数组 {i+1} ({group['name']}): {len(group['params'])} 个参数, 学习率: {group['lr']:.2e}")
+    print("----------------------------\n")
+    return original_optimizer, new_optimizer
+
+
+# copied from huggingface
+def get_cosine_schedule_with_warmup(optimizer, num_warmup_steps, num_training_steps, num_cycles=0.5, last_epoch=-1):
+
+    def lr_lambda(current_step):
+        if current_step < num_warmup_steps:
+            return float(current_step) / float(max(1, num_warmup_steps))
+        progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
+        return max(0.0, 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress)))
+
+    return LambdaLR(optimizer, lr_lambda, last_epoch)
+
+
+def get_schedule_with_warmup(optimizer, num_warmup_steps, last_epoch=-1):
+    
+    def lr_lambda(current_step):
+        if current_step < num_warmup_steps:
+            return float(current_step) / float(max(1, num_warmup_steps))
+        else:
+            return 1.0
+
+    return LambdaLR(optimizer, lr_lambda, last_epoch)
 
 
 def prepare_data(config: dict, flag_test: bool, flag_id: bool, data_source: str | int, test_size: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -213,10 +314,11 @@ def setup_logging(config: dict) -> tuple[object, str]:
 
 
 def log_epoch(config: dict, log_file: str, epoch: int, mse: list[float], mae: list[float], r2: list[float], 
-              max_ae: list[float], std_error: list[float], patience_left: int, is_best: list[bool]):
+              max_ae: list[float], std_error: list[float], patience_left: int, is_best: list[bool], new_scheduler_lr: float):
     """Logs epoch information to file and console."""
     status = "Initial" if epoch == 0 else f"Epoch {epoch}"
-    log_entry = f"📊 {status} Evaluation | Patience: {patience_left}\n"
+    log_entry = f"📊 {status} Evaluation | Patience: {patience_left}"
+    log_entry += f" | New Scheduler LR: {new_scheduler_lr:.2e}\n" if new_scheduler_lr is not None else "\n"
 
     for idx, each_dataset in enumerate(config["dataset"]["evaluate"].keys()):
         best_marker = "🌟 BEST" if is_best[idx] else ""
@@ -366,12 +468,27 @@ def main():
 
     # Optimizer must be created AFTER get_preprocessed_datasets, which initializes the model
     regressor.config_ = torch.load(config["model_path"], map_location="cpu", weights_only=None)["config"]
-    optimizer = Adam(
-        regressor.model_.parameters(), lr=config["finetuning"]["learning_rate"]
-    )
-    print(
-        f"--- Optimizer Initialized: Adam, LR: {config['finetuning']['learning_rate']} ---\n"
-    )
+    
+    if "layered_learning_rate" in config["finetuning"]:
+        optimizer, new_optimizer = create_layered_optimizer(regressor.model_, config["finetuning"]["layered_learning_rate"])
+         # Create Cosine scheduler
+        scheduler = get_schedule_with_warmup(
+            optimizer, num_warmup_steps=0
+        )
+        new_scheduler = get_cosine_schedule_with_warmup(
+            new_optimizer, 
+            num_warmup_steps=config["finetuning"]["layered_learning_rate"]["transformer_encoder"]["new"]["warmup_steps"], 
+            num_training_steps=config["finetuning"]["epochs"]
+        )
+    else:
+        optimizer = Adam(
+            regressor.model_.parameters(), lr=config["finetuning"]["learning_rate"]
+        )
+        new_optimizer = None
+        scheduler, new_scheduler = None, None
+        print(
+            f"--- Optimizer Initialized: Adam, LR: {config['finetuning']['learning_rate']} ---\n"
+        )
 
     # Create evaluation config, linking it to the master config
     eval_config = {
@@ -393,6 +510,7 @@ def main():
     start_time = time.time()
     total_time = []
     for epoch in range(config["finetuning"]["epochs"] + 1):
+        # breakpoint()
         if epoch > 0:
             plot_dict["epochs"] += 1
             plot_dict["train_loss"].append([])
@@ -404,6 +522,7 @@ def main():
             for finetuning_dataloader_tuple in progress_bar:
                 total_loss = None
                 optimizer.zero_grad()
+                new_optimizer.zero_grad() if new_optimizer else None
                 for data_batch in finetuning_dataloader_tuple:              
                     (
                         X_trains_p,
@@ -434,10 +553,14 @@ def main():
                 total_loss = total_loss.mean()
                 total_loss.backward()
                 optimizer.step()
+                new_optimizer.step() if new_optimizer else None
                 
                 # # Set the postfix of the progress bar to show the current loss
                 # progress_bar.set_postfix(loss=f"{loss.item():.4f}")
                 plot_dict["train_loss"][-1].append(total_loss.item())
+            
+            scheduler.step() if scheduler else None
+            new_scheduler.step() if new_scheduler else None
             plot_dict["train_loss"][-1] = sum(plot_dict["train_loss"][-1]) / len(plot_dict["train_loss"][-1])
 
         # Evaluation Step (runs before finetuning and after each epoch)
@@ -463,7 +586,8 @@ def main():
         )
 
         patience_left = adaptive_es.remaining_patience(cur_round=epoch)
-        log_epoch(config, log_file, epoch, mse, mae, r2, max_ae, std_error, patience_left, is_best)
+        new_scheduler_lr = new_scheduler.get_last_lr()[0] if new_scheduler else None
+        log_epoch(config, log_file, epoch, mse, mae, r2, max_ae, std_error, patience_left, is_best, new_scheduler_lr)
         
         if early_stop_no_imp:
             with open(log_file, "a") as f:

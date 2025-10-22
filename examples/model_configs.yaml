@@ -4,10 +4,10 @@ ID: test
 dataset:
   pretrained:
     data_path: "/home/fit/zhangcs/WORK/chenkq/project/dataset/pretrained"
-    batch_num: 4
+    batch_num: 8
   openml:
-    source: ["/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/topo_2_1_422.csv", "/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/yprop_4_1_416.csv"]
-    flag_id: [True, True]
+    source: []
+    flag_id: []
     # 44981["/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/pumadyn32nh_44981.csv"], 
     # 44973["/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/grid_stability_44973.csv"], 
     # 44978["/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/cpu_activity_44978.csv"], 
@@ -60,12 +60,28 @@ finetuning:
   learning_rate: 1.5e-6
   # Meta Batch size for finetuning, i.e. how many datasets per batch. Must be 1 currently.
   meta_batch_size: 1
+  
+  # 分层学习率配置 (可选)
+  # 如果设置了layered_learning_rate，将使用分层学习率而不是统一的learning_rate
+  layered_learning_rate:
+    # 编码器层学习率配置
+    transformer_encoder: 
+      original:
+        layers: [0, 1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13]
+        learning_rate: 1.5e-6
+      new:
+        layers: [6, 7]
+        learning_rate: 1.5e-2
+        warmup_steps: 10
+    # 其他层学习率
+    other_layers: 1.5e-6
+    # 默认学习率（当层未明确配置时使用）
+    default_lr: 1.5e-6
 
 adptive_es:
   adaptive_rate: 0.2
   adaptive_offset: 5
-  min_patience: 5
-  min_patience: 5
-  max_patience: 100
+  min_patience: 500
+  max_patience: 500
 
 model_path: "/home/fit/zhangcs/WORK/chenkq/project/ckpt/tabpfn-v2-regressor.ckpt"
