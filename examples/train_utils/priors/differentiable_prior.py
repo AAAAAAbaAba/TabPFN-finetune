@@ -233,10 +233,16 @@ def get_batch(batch_size, seq_len, num_features, get_batch
     args = {'device': device, 'seq_len': seq_len, 'num_features': num_features, 'batch_size': batch_size_per_gp_sample}
     args = {**kwargs, **args}
 
-    models = [DifferentiablePrior(get_batch, hyperparameters, differentiable_hyperparameters, args) for _ in range(num_models)]
-    sample = sum([[model()] for model in models], [])
+    while True:
+        models = [DifferentiablePrior(get_batch, hyperparameters, differentiable_hyperparameters, args) for _ in range(num_models)]
+        sample = sum([[model()] for model in models], [])
 
-    x, y, y_, hyperparameter_dict = zip(*sample)
+        x, y, y_, hyperparameter_dict = zip(*sample)
+        if torch.any(torch.isnan(torch.cat(y, 1))):
+            print("Initialize a new batch!")
+            continue
+        else:
+            break
 
     if 'verbose' in hyperparameters and hyperparameters['verbose']:
         print('Hparams', hyperparameter_dict[0].keys())

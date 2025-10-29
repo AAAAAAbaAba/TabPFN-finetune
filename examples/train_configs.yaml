@@ -21,8 +21,8 @@ SynsData:
     differentiable: True
     flexible: True
     recompute_attn: True
-    epochs: 50 # 400
-    num_steps: 128 # 1024
+    epochs: 100 # 400
+    num_steps: 1024 # 1024
     num_classes: 0 # for regression
 
 

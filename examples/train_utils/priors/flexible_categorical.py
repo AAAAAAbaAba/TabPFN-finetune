@@ -140,86 +140,81 @@ class FlexibleCategorical(torch.nn.Module):
         return x
 
     def forward(self, batch_size):
-        nan_flag = True
-        while nan_flag:
-            x, y, y_ = self.get_batch(hyperparameters=self.h, **self.args_passed)
+        x, y, y_ = self.get_batch(hyperparameters=self.h, **self.args_passed)
 
-            if self.h['nan_prob_no_reason']+self.h['nan_prob_a_reason']+self.h['nan_prob_unknown_reason'] > 0 and random.random() > 0.5: # Only one out of two datasets should have nans
-                if random.random() < self.h['nan_prob_no_reason']: # Missing for no reason
-                    x = self.drop_for_no_reason(x, nan_handling_missing_for_no_reason_value(self.h['set_value_to_nan']))
+        if self.h['nan_prob_no_reason']+self.h['nan_prob_a_reason']+self.h['nan_prob_unknown_reason'] > 0 and random.random() > 0.5: # Only one out of two datasets should have nans
+            if random.random() < self.h['nan_prob_no_reason']: # Missing for no reason
+                x = self.drop_for_no_reason(x, nan_handling_missing_for_no_reason_value(self.h['set_value_to_nan']))
 
-                if self.h['nan_prob_a_reason'] > 0 and random.random() > 0.5: # Missing for a reason
-                    x = self.drop_for_reason(x, nan_handling_missing_for_a_reason_value(self.h['set_value_to_nan']))
+            if self.h['nan_prob_a_reason'] > 0 and random.random() > 0.5: # Missing for a reason
+                x = self.drop_for_reason(x, nan_handling_missing_for_a_reason_value(self.h['set_value_to_nan']))
 
-                if self.h['nan_prob_unknown_reason'] > 0: # Missing for unknown reason  and random.random() > 0.5
-                    if random.random() < self.h['nan_prob_unknown_reason_reason_prior']:
-                        x = self.drop_for_no_reason(x, nan_handling_missing_for_unknown_reason_value(self.h['set_value_to_nan']))
-                    else:
-                        x = self.drop_for_reason(x, nan_handling_missing_for_unknown_reason_value(self.h['set_value_to_nan']))
+            if self.h['nan_prob_unknown_reason'] > 0: # Missing for unknown reason  and random.random() > 0.5
+                if random.random() < self.h['nan_prob_unknown_reason_reason_prior']:
+                    x = self.drop_for_no_reason(x, nan_handling_missing_for_unknown_reason_value(self.h['set_value_to_nan']))
+                else:
+                    x = self.drop_for_reason(x, nan_handling_missing_for_unknown_reason_value(self.h['set_value_to_nan']))
 
-            # Categorical features
-            if 'categorical_feature_p' in self.h and random.random() < self.h['categorical_feature_p']:
-                p = random.random()
-                for col in range(x.shape[2]):
-                    num_unique_features = max(round(random.gammavariate(1,10)),2)
-                    m = MulticlassRank(num_unique_features, ordered_p=0.3)
-                    if random.random() < p:
-                        x[:, :, col] = m(x[:, :, col])
+        # Categorical features
+        if 'categorical_feature_p' in self.h and random.random() < self.h['categorical_feature_p']:
+            p = random.random()
+            for col in range(x.shape[2]):
+                num_unique_features = max(round(random.gammavariate(1,10)),2)
+                m = MulticlassRank(num_unique_features, ordered_p=0.3)
+                if random.random() < p:
+                    x[:, :, col] = m(x[:, :, col])
 
-            if self.h['normalize_to_ranking']:
-                x = to_ranking_low_mem(x)
-            else:
-                x = remove_outliers(x)
-            x, y = normalize_data(x), normalize_data(y)
+        if self.h['normalize_to_ranking']:
+            x = to_ranking_low_mem(x)
+        else:
+            x = remove_outliers(x)
+        x, y = normalize_data(x), normalize_data(y)
 
-            # Cast to classification if enabled
-            y = self.class_assigner(y).float()
+        # Cast to classification if enabled
+        y = self.class_assigner(y).float()
 
-            if self.h['normalize_by_used_features']:
-                x = normalize_by_used_features_f(x, self.h['num_features_used'], self.args['num_features'], normalize_with_sqrt=self.h.get('normalize_with_sqrt',False))
-            # Append empty features if enabled
-            # x = torch.cat(
-            #     [x, torch.zeros((x.shape[0], x.shape[1], self.args['num_features'] - self.h['num_features_used']),
-            #                     device=self.args['device'])], -1)
-            if torch.isnan(y).sum() > 0:
-                print('Nans in target!')
-                continue
-            else:
-                nan_flag = False
+        if self.h['normalize_by_used_features']:
+            x = normalize_by_used_features_f(x, self.h['num_features_used'], self.args['num_features'], normalize_with_sqrt=self.h.get('normalize_with_sqrt',False))
+        # Append empty features if enabled
+        # x = torch.cat(
+        #     [x, torch.zeros((x.shape[0], x.shape[1], self.args['num_features'] - self.h['num_features_used']),
+        #                     device=self.args['device'])], -1)
+        if torch.isnan(y).sum() > 0:
+            print('Nans in target!')
 
-            if self.h['check_is_compatible']:
-                for b in range(y.shape[1]):
-                    is_compatible, N = False, 0
-                    while not is_compatible and N < 10:
-                        targets_in_train = torch.unique(y[:self.args['single_eval_pos'], b], sorted=True)
-                        targets_in_eval = torch.unique(y[self.args['single_eval_pos']:, b], sorted=True)
+        if self.h['check_is_compatible']:
+            for b in range(y.shape[1]):
+                is_compatible, N = False, 0
+                while not is_compatible and N < 10:
+                    targets_in_train = torch.unique(y[:self.args['single_eval_pos'], b], sorted=True)
+                    targets_in_eval = torch.unique(y[self.args['single_eval_pos']:, b], sorted=True)
 
-                        is_compatible = len(targets_in_train) == len(targets_in_eval) and (
-                                    targets_in_train == targets_in_eval).all() and len(targets_in_train) > 1
+                    is_compatible = len(targets_in_train) == len(targets_in_eval) and (
+                                targets_in_train == targets_in_eval).all() and len(targets_in_train) > 1
 
-                        if not is_compatible:
-                            randperm = torch.randperm(x.shape[0])
-                            x[:, b], y[:, b] = x[randperm, b], y[randperm, b]
-                        N = N + 1
                     if not is_compatible:
-                        if not is_compatible:
-                            # todo check that it really does this and how many together
-                            y[:, b] = -100 # Relies on CE having `ignore_index` set to -100 (default)
+                        randperm = torch.randperm(x.shape[0])
+                        x[:, b], y[:, b] = x[randperm, b], y[randperm, b]
+                    N = N + 1
+                if not is_compatible:
+                    if not is_compatible:
+                        # todo check that it really does this and how many together
+                        y[:, b] = -100 # Relies on CE having `ignore_index` set to -100 (default)
 
-            if self.h['normalize_labels']:
-                #assert self.h['output_multiclass_ordered_p'] == 0., "normalize_labels destroys ordering of labels anyways."
-                for b in range(y.shape[1]):
-                    valid_labels = y[:,b] != -100
-                    if self.h.get('normalize_ignore_label_too', False):
-                        valid_labels[:] = True
-                    y[valid_labels, b] = (y[valid_labels, b] > y[valid_labels, b].unique().unsqueeze(1)).sum(axis=0).unsqueeze(0).float()
+        if self.h['normalize_labels']:
+            #assert self.h['output_multiclass_ordered_p'] == 0., "normalize_labels destroys ordering of labels anyways."
+            for b in range(y.shape[1]):
+                valid_labels = y[:,b] != -100
+                if self.h.get('normalize_ignore_label_too', False):
+                    valid_labels[:] = True
+                y[valid_labels, b] = (y[valid_labels, b] > y[valid_labels, b].unique().unsqueeze(1)).sum(axis=0).unsqueeze(0).float()
 
-                    if y[valid_labels, b].numel() != 0 and self.h.get('rotate_normalized_labels', True):
-                        num_classes_float = (y[valid_labels, b].max() + 1).cpu()
-                        num_classes = num_classes_float.int().item()
-                        assert num_classes == num_classes_float.item()
-                        random_shift = torch.randint(0, num_classes, (1,), device=self.args['device'])
-                        y[valid_labels, b] = (y[valid_labels, b] + random_shift) % num_classes
+                if y[valid_labels, b].numel() != 0 and self.h.get('rotate_normalized_labels', True):
+                    num_classes_float = (y[valid_labels, b].max() + 1).cpu()
+                    num_classes = num_classes_float.int().item()
+                    assert num_classes == num_classes_float.item()
+                    random_shift = torch.randint(0, num_classes, (1,), device=self.args['device'])
+                    y[valid_labels, b] = (y[valid_labels, b] + random_shift) % num_classes
 
         return x, y, y  # x.shape = (T,B,H)
 
