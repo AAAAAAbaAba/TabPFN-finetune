@@ -20,7 +20,7 @@ from tqdm import tqdm
 from tabpfn import TabPFNRegressor
 from tabpfn.finetune_utils import clone_model_for_evaluation
 from tabpfn.utils import meta_dataset_collator
-from tabpfn.model_loading import load_model
+from tabpfn.model_loading import save_tabpfn_model
 
 import yaml
 import pandas as pd
@@ -269,20 +269,21 @@ def save_model_checkpoint(regressor: TabPFNRegressor, id: int, epoch: int):
     checkpoint_path = os.path.join(ckpt_dir, f"tabpfn_finetuned-ID_{id}-epoch_{epoch}.ckpt")
     checkpoint = {}
 
-    def make_serializable(config_sample):
-        if isinstance(config_sample, dict):
-            config_sample = {k: make_serializable(config_sample[k]) for k in config_sample}
-        if isinstance(config_sample, list):
-            config_sample = [make_serializable(v) for v in config_sample]
-        if callable(config_sample):
-            config_sample = str(config_sample)
-        return config_sample
+    # def make_serializable(config_sample):
+    #     if isinstance(config_sample, dict):
+    #         config_sample = {k: make_serializable(config_sample[k]) for k in config_sample}
+    #     if isinstance(config_sample, list):
+    #         config_sample = [make_serializable(v) for v in config_sample]
+    #     if callable(config_sample):
+    #         config_sample = str(config_sample)
+    #     return config_sample
     
-    checkpoint["state_dict"] = regressor.model_.state_dict()
-    checkpoint["state_dict"].update({"criterion.borders": regressor.bardist_.borders, 
-                                     "criterion.losses_per_bucket": regressor.bardist_.losses_per_bucket})
-    checkpoint["config"] = make_serializable(regressor.config_)
-    torch.save(checkpoint, checkpoint_path)
+    # checkpoint["state_dict"] = regressor.model_.state_dict()
+    # checkpoint["state_dict"].update({"criterion.borders": regressor.bardist_.borders, 
+    #                                  "criterion.losses_per_bucket": regressor.bardist_.losses_per_bucket})
+    # checkpoint["config"] = make_serializable(regressor.config_)
+    # torch.save(checkpoint, checkpoint_path)
+    save_tabpfn_model(regressor, checkpoint_path)
     print(f"💾 Model checkpoint saved to {checkpoint_path}")
 
 
@@ -387,7 +388,7 @@ def save_summary(log_file: str, plot_dict: dict, total_time: list):
 def main():
     """Main function to configure and run the finetuning workflow."""
     # --- Master Configuration ---
-    with open(os.path.join(DIR_PATH, "examples/model_configs.yaml"), "r") as file:
+    with open(os.path.join(DIR_PATH, "examples/finetune_configs.yaml"), "r") as file:
         config = yaml.safe_load(file)
     # Sets the computation device ('cuda' for GPU if available, otherwise 'cpu').
     config["device"] = "cuda" if torch.cuda.is_available() else "cpu"
@@ -467,8 +468,8 @@ def main():
     ) for each_training_datasets in training_datasets]
 
     # Optimizer must be created AFTER get_preprocessed_datasets, which initializes the model
-    regressor.config_ = torch.load(config["model_path"], map_location="cpu", weights_only=None)["config"]
-    
+    # regressor.config_ = torch.load(config["model_path"], map_location="cpu", weights_only=None)["config"]
+
     if "layered_learning_rate" in config["finetuning"]:
         optimizer, new_optimizer = create_layered_optimizer(regressor.model_, config["finetuning"]["layered_learning_rate"])
          # Create Cosine scheduler
@@ -510,7 +511,6 @@ def main():
     start_time = time.time()
     total_time = []
     for epoch in range(config["finetuning"]["epochs"] + 1):
-        # breakpoint()
         if epoch > 0:
             plot_dict["epochs"] += 1
             plot_dict["train_loss"].append([])

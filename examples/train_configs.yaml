@@ -1,0 +1,66 @@
+SynsData:
+  basic:
+    bptt_extra_samples: 
+    normalize_with_sqrt: False
+    new_mlp_per_example: True
+    prior_mlp_scale_weights_sqrt: True
+    batch_size_per_gp_sample: 
+    normalize_ignore_label_too: False
+    differentiable_hps_as_style: False
+    max_eval_pos: 1000
+    random_feature_rotation: True
+    rotate_normalized_labels: True
+    canonical_y_encoder: False
+    aggregate_k_gradients: 8
+    total_available_time_in_s: 
+    train_mixed_precision: True
+    efficient_eval_masking: True
+
+  prior:
+    prior_type: prior_bag
+    differentiable: True
+    flexible: True
+    recompute_attn: True
+    epochs: 50 # 400
+    num_steps: 128 # 1024
+    num_classes: 0 # for regression
+
+
+Model:
+  ID: test
+  random_seed: 42
+  n_estimators: 2
+  layers:
+      transformer_encoder: 
+        original:
+          layers: [0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16, 17]
+        new:
+          layers: [6, 7, 8, 9, 10, 11]
+          warmup_steps: 10
+      default_lr: 1.5e-6
+  epoch_start: 0
+  model_path: /home/fit/zhangcs/WORK/chenkq/project/ckpt/tabpfn-v2-regressor.ckpt
+
+
+Dataset:
+  num_samples_to_use: 8_000
+  random_seed: 42
+  valid_set_ratio: 0.3
+  n_inference_context_samples: 1_000
+  evaluate:
+    4A:
+      train: "/home/fit/zhangcs/WORK/chenkq/project/dataset/phm2016/PHM2016_4A_train.csv"
+      test: "/home/fit/zhangcs/WORK/chenkq/project/dataset/phm2016/PHM2016_4A_test.csv"
+      flag_id: True
+    4B:
+      train: "/home/fit/zhangcs/WORK/chenkq/project/dataset/phm2016/PHM2016_4B_train.csv"
+      test: "/home/fit/zhangcs/WORK/chenkq/project/dataset/phm2016/PHM2016_4B_test.csv"
+      flag_id: True
+    zhengqi:
+      train: "/home/fit/zhangcs/WORK/chenkq/project/dataset/zhengqi/zhengqi_train.csv"
+      test: "/home/fit/zhangcs/WORK/chenkq/project/dataset/zhengqi/zhengqi_test.csv"
+      flag_id: True
+    guangfu:
+      train: "/home/fit/zhangcs/WORK/chenkq/project/dataset/guangfu/guangfu_train.csv"
+      test:  "/home/fit/zhangcs/WORK/chenkq/project/dataset/guangfu/guangfu_test.csv"
+      flag_id: True

@@ -67,10 +67,10 @@ finetuning:
     # 编码器层学习率配置
     transformer_encoder: 
       original:
-        layers: [0, 1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13]
+        layers: [0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16, 17]
         learning_rate: 1.5e-6
       new:
-        layers: [6, 7]
+        layers: [6, 7, 8, 9, 10, 11]
         learning_rate: 1.5e-2
         warmup_steps: 10
     # 其他层学习率
