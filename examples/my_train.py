@@ -34,6 +34,7 @@ from contextlib import nullcontext
 import time
 import os
 import sys
+import csv
 # 添加项目根目录到Python路径
 DIR_PATH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(DIR_PATH)
@@ -235,8 +236,6 @@ def setup_logging(config: dict) -> tuple[object, str]:
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
     
-    log_file = os.path.join(log_dir, f"fintuning_log-ID_{config['ID']}.txt")
-
     def write_config(config_, subs=0):
         for k, v in config_.items():
             if isinstance(v, dict):
@@ -247,16 +246,32 @@ def setup_logging(config: dict) -> tuple[object, str]:
                 f.write(subs * "  ")
                 f.write(f"{k}: {v}\n")
     
-    # Write config to log file
-    with open(log_file, "w") as f:
-        f.write("=== Training Configuration ===\n")
-        write_config(config)
-        f.write("=============================\n\n")
+    # log文件
+    log_file_path = os.path.join(log_dir, f"fintuning_log-ID_{config['ID']}.txt")
+    if not os.path.exists(log_file_path):
+        with open(log_file_path, "w") as f:
+            f.write("=== Training Configuration ===\n")
+            write_config(config)
+            f.write("=============================\n\n")
+
+    # step loss CSV文件
+    step_loss_csv_path = os.path.join(log_dir, f"step_losses-ID_{config['ID']}.csv")
+    if not os.path.exists(step_loss_csv_path):
+        with open(step_loss_csv_path, mode="w", newline="") as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(["epoch", "step", "loss"])  # header
     
-    return log_file
+    # evaluate CSV文件
+    eval_csv_path = os.path.join(log_dir, f"eval_metrics-ID_{config['ID']}.csv")
+    if not os.path.exists(eval_csv_path):
+        with open(eval_csv_path, mode="w", newline="") as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(["epoch", "dataset", "mse", "mae", "r2", "max_ae", "std_error", "is_best", "scheduler_lr"])  # header
+    
+    return log_file_path, step_loss_csv_path, eval_csv_path
 
 
-def log_epoch(config: dict, log_file: str, epoch: int, mse: list[float], mae: list[float], r2: list[float], 
+def log_epoch(config: dict, log_file_path: str, eval_csv_path: str, epoch: int, mse: list[float], mae: list[float], r2: list[float], 
               max_ae: list[float], std_error: list[float], is_best: list[bool], new_scheduler_lr: float):
     """Logs epoch information to file and console."""
     status = "Initial" if epoch == 0 else f"Epoch {epoch}"
@@ -271,9 +286,25 @@ def log_epoch(config: dict, log_file: str, epoch: int, mse: list[float], mae: li
         )
     
     # Write to log file
-    with open(log_file, "a") as f:
+    with open(log_file_path, "a") as f:
         f.write(log_entry)
     
+    # write to evaluate CSV file
+    with open(eval_csv_path, mode="a", newline="") as csvfile:
+        writer = csv.writer(csvfile)
+        for idx, each_dataset in enumerate(config["evaluate"].keys()):
+            writer.writerow([
+                epoch, 
+                each_dataset, 
+                mse[idx], 
+                mae[idx], 
+                r2[idx], 
+                max_ae[idx], 
+                std_error[idx], 
+                is_best[idx], 
+                new_scheduler_lr
+            ])
+
     # Print to console
     print(log_entry)
 
@@ -338,6 +369,7 @@ def train(
     evaluate_function: Callable,
     ID: int,
     log_function: Callable,
+    step_loss_csv_path: str,
     extra_prior_kwargs_dict: dict,
 ):
     using_dist, rank, device = init_dist(device)
@@ -379,9 +411,9 @@ def train(
         scheduler, new_scheduler = None, None
     scaler = GradScaler('cuda') if train_mixed_precision else None
 
-
     def train_epoch(epoch: int):
         total_loss = 0.0
+        step_rows = []
         assert len(dl) % aggregate_k_gradients == 0, \
             f"Please set the number of `steps_per_epoch`: {len(dl)} s.t. \
             `aggregate_k_gradients`:{aggregate_k_gradients} divides it."
@@ -467,19 +499,23 @@ def train(
                     losses = losses.mean()
                     total_loss += losses.cpu().detach().item()
                     progress_bar.set_postfix(loss=f"{losses.item():.4f}")
-                # nan_steps += nan_share
+                    step_rows.append([epoch, step, float(losses.item())])
 
                 if flag:
                     print(
                         f'| epoch {epoch:3d} | step {step} | mean loss {total_loss / (step+1) :5.2f} | step time {step_time:5.2f} | forward time {forward_time:5.2f} |',
                         flush=True
                     )
+        if step_rows:
+            with open(step_loss_csv_path, mode="a", newline="") as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerows(step_rows)
         return total_loss / steps_per_epoch
 
     total_loss = float('-inf')
     best_validation_r2 = []
     for epoch in range(epoch_start, epochs + 1):
-        if epoch > 0:
+        if epoch > epoch_start:
             epoch_start_time = time.time()
             total_loss= train_epoch(epoch)
 
@@ -503,8 +539,8 @@ def train(
                 else:
                     is_best.append(False)
         any_best = np.array(is_best).any()
-        if any_best:
-            save_model_checkpoint(regressor=model, id=ID, epoch=epoch)
+        # if any_best:
+        save_model_checkpoint(regressor=model, id=ID, epoch=epoch)
         
         new_scheduler_lr = new_scheduler.get_last_lr()[0] if new_scheduler else None
         log_function(
@@ -581,11 +617,12 @@ def main():
 
 
     # 配置logging
-    log_file = setup_logging(model_config)
+    log_file_path, step_loss_csv_path, eval_csv_path = setup_logging(model_config)
     log_epoch_ = partial(
         log_epoch,
         config=train_configs['Dataset'],
-        log_file=log_file,
+        log_file_path=log_file_path,
+        eval_csv_path=eval_csv_path,
     )
 
     # 配置evaluation
@@ -641,6 +678,7 @@ def main():
         evaluate_function=evaluate_regressor_,
         ID=model_config['ID'],
         log_function=log_epoch_,
+        step_loss_csv_path=step_loss_csv_path,
         extra_prior_kwargs_dict={
             'num_features': config['num_features'], 
             'hyperparameters': prior_hyperparameters, 

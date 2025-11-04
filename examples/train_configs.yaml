@@ -21,7 +21,7 @@ SynsData:
     differentiable: True
     flexible: True
     recompute_attn: True
-    epochs: 100 # 400
+    epochs: 100 # 100
     num_steps: 1024 # 1024
     num_classes: 0 # for regression
 
@@ -36,10 +36,10 @@ Model:
           layers: [0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16, 17]
         new:
           layers: [6, 7, 8, 9, 10, 11]
-          warmup_steps: 10
+          warmup_steps: 10 # 10
       default_lr: 1.5e-6
-  epoch_start: 0
-  model_path: /home/fit/zhangcs/WORK/chenkq/project/ckpt/tabpfn-v2-regressor.ckpt
+  epoch_start: 10
+  model_path: /home/fit/zhangcs/WORK/chenkq/project/TabPFN-finetune/logs/ID_test_znorm/ckpt/tabpfn_finetuned-ID_test_znorm-epoch_10.ckpt
 
 
 Dataset:

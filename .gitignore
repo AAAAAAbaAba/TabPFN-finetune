@@ -167,5 +167,5 @@ CLAUDE.md
 
 figs/
 logs/
-stderr.ckq
-stdout.ckq
+plot_experiment_results.py
+plot_test_single.py
