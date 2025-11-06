@@ -82,6 +82,7 @@ def create_layered_optimizer(model, layer_lr_config: dict, weight_decay: float =
         temp_params_dict = {
             "params": params,
             "lr": lr,
+            "initial_lr": lr,
             "name": f"transformer_layer_{layer_type}"
         }
         if layer_type == "new":
@@ -95,6 +96,7 @@ def create_layered_optimizer(model, layer_lr_config: dict, weight_decay: float =
         original_param_groups.append({
             "params": other_params,
             "lr": other_lr,
+            "initial_lr": other_lr,
             "name": "other_layers"
         })
     
@@ -102,7 +104,8 @@ def create_layered_optimizer(model, layer_lr_config: dict, weight_decay: float =
     if not original_param_groups:
         original_param_groups.append({
             "params": list(model.parameters()), 
-            "lr": layer_lr_config.get("default_lr", 1e-6)
+            "lr": layer_lr_config.get("default_lr", 1e-6),
+            "initial_lr": layer_lr_config.get("default_lr", 1e-6),
         })
     
     original_optimizer = torch.optim.AdamW(original_param_groups, weight_decay=weight_decay)
@@ -272,7 +275,7 @@ def setup_logging(config: dict) -> tuple[object, str]:
 
 
 def log_epoch(config: dict, log_file_path: str, eval_csv_path: str, epoch: int, mse: list[float], mae: list[float], r2: list[float], 
-              max_ae: list[float], std_error: list[float], is_best: list[bool], new_scheduler_lr: float):
+              max_ae: list[float], std_error: list[float], is_best: list[bool], new_scheduler_lr: float, write_to_file: bool = True):
     """Logs epoch information to file and console."""
     status = "Initial" if epoch == 0 else f"Epoch {epoch}"
     log_entry = f"📊 {status} Evaluation"
@@ -285,28 +288,29 @@ def log_epoch(config: dict, log_file_path: str, eval_csv_path: str, epoch: int, 
             f"Test R2: {r2[idx]:>7.4f}, Test max_AE: {max_ae[idx]:>7.4f}, Test std_ERR: {std_error[idx]:>7.4f} | {best_marker}\n"
         )
     
-    # Write to log file
-    with open(log_file_path, "a") as f:
-        f.write(log_entry)
-    
-    # write to evaluate CSV file
-    with open(eval_csv_path, mode="a", newline="") as csvfile:
-        writer = csv.writer(csvfile)
-        for idx, each_dataset in enumerate(config["evaluate"].keys()):
-            writer.writerow([
-                epoch, 
-                each_dataset, 
-                mse[idx], 
-                mae[idx], 
-                r2[idx], 
-                max_ae[idx], 
-                std_error[idx], 
-                is_best[idx], 
-                new_scheduler_lr
-            ])
-
-    # Print to console
     print(log_entry)
+    
+    if write_to_file:
+        # write to log file
+        with open(log_file_path, "a") as f:
+            f.write(log_entry)
+    
+        # write to evaluate CSV file
+        with open(eval_csv_path, mode="a", newline="") as csvfile:
+            writer = csv.writer(csvfile)
+            for idx, each_dataset in enumerate(config["evaluate"].keys()):
+                writer.writerow([
+                    epoch, 
+                    each_dataset, 
+                    mse[idx], 
+                    mae[idx], 
+                    r2[idx], 
+                    max_ae[idx], 
+                    std_error[idx], 
+                    is_best[idx], 
+                    new_scheduler_lr
+                ])
+
 
 
 def plot_results(plot_dict: dict, id: int):
@@ -399,11 +403,16 @@ def train(
 
     if isinstance(lr, dict):
         optimizer, new_optimizer = create_layered_optimizer(model.model_, lr, weight_decay=0.0)
-        scheduler = get_schedule_with_warmup(optimizer, num_warmup_steps=lr["transformer_encoder"]["new"]["warmup_steps"])
+        scheduler = get_schedule_with_warmup(
+            optimizer, 
+            num_warmup_steps=lr["transformer_encoder"]["new"]["warmup_steps"], 
+            last_epoch=epoch_start,
+        )
         new_scheduler = get_cosine_schedule_with_warmup(
             new_optimizer, 
             num_warmup_steps=lr["transformer_encoder"]["new"]["warmup_steps"], 
-            num_training_steps=epochs
+            num_training_steps=epochs,
+            last_epoch=epoch_start,
         )
     else:
         optimizer = AdamW(model.model_.parameters(), lr=lr, weight_decay=0.0)
@@ -456,7 +465,7 @@ def train(
                     if flag: 
                         forward_time = time.time() - before_forward
 
-                    loss_fn = raw_space_bardist_[0]
+                    loss_fn = znorm_space_bardist_[0]
                     losses = loss_fn(logits, y_test_znorm.to(logits.device))
                     losses = losses.view((-1, batch_size))
                     loss = torch_nanmean(losses.mean(dim=0))
@@ -523,8 +532,10 @@ def train(
             print(f'| end of epoch {epoch:3d} | time: {(time.time() - epoch_start_time):5.2f}s | mean loss {total_loss:5.2f}')
             print('-' * 100)
 
-            if scheduler: scheduler.step()
-            if new_scheduler: new_scheduler.step()
+            if scheduler: 
+                scheduler.step()
+            if new_scheduler: 
+                new_scheduler.step()
         
         mse, mae, r2, max_ae, std_error = evaluate_function(regressor=model)
         if not best_validation_r2: 
@@ -540,12 +551,14 @@ def train(
                     is_best.append(False)
         any_best = np.array(is_best).any()
         # if any_best:
-        save_model_checkpoint(regressor=model, id=ID, epoch=epoch)
+        if epoch > epoch_start:
+            save_model_checkpoint(regressor=model, id=ID, epoch=epoch)
         
         new_scheduler_lr = new_scheduler.get_last_lr()[0] if new_scheduler else None
         log_function(
             epoch=epoch, mse=mse, mae=mae, r2=r2, max_ae=max_ae, std_error=std_error, 
             is_best=is_best, new_scheduler_lr=new_scheduler_lr,
+            write_to_file=epoch > epoch_start,
         )
 
 

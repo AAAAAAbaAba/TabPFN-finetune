@@ -27,7 +27,7 @@ SynsData:
 
 
 Model:
-  ID: test
+  ID: test_znorm
   random_seed: 42
   n_estimators: 2
   layers:
@@ -38,8 +38,9 @@ Model:
           layers: [6, 7, 8, 9, 10, 11]
           warmup_steps: 10 # 10
       default_lr: 1.5e-6
-  epoch_start: 10
-  model_path: /home/fit/zhangcs/WORK/chenkq/project/TabPFN-finetune/logs/ID_test_znorm/ckpt/tabpfn_finetuned-ID_test_znorm-epoch_10.ckpt
+  epoch_start: 15
+  model_path: /home/fit/zhangcs/WORK/chenkq/project/TabPFN-finetune/logs/ID_test_znorm/ckpt/tabpfn_finetuned-ID_test_znorm-epoch_15.ckpt
+  # /home/fit/zhangcs/WORK/chenkq/project/ckpt/tabpfn-v2-regressor.ckpt
 
 
 Dataset:
