@@ -183,7 +183,7 @@ def setup_regressor(config: dict) -> tuple[TabPFNRegressor, dict]:
     }
     regressor = TabPFNRegressor(
         **regressor_config,
-        model_path=config["model_path"],
+        model_path=config.get("model_path", config.get("default_model_path", None)),
         fit_mode="batched",
         differentiable_input=False,
     )
@@ -310,7 +310,6 @@ def log_epoch(config: dict, log_file_path: str, eval_csv_path: str, epoch: int, 
                     is_best[idx], 
                     new_scheduler_lr
                 ])
-
 
 
 def plot_results(plot_dict: dict, id: int):
@@ -522,8 +521,16 @@ def train(
         return total_loss / steps_per_epoch
 
     total_loss = float('-inf')
-    best_validation_r2 = []
+    if epoch_start > 0:
+        eval_csv_path = os.path.join(DIR_PATH, "logs", f"ID_{ID}", f"eval_metrics-ID_{ID}.csv")
+        eval_df = pd.read_csv(eval_csv_path)
+        eval_df = eval_df[eval_df["epoch"] < epoch_start]
+        dataset_order = eval_df["dataset"].drop_duplicates().tolist()
+        best_validation_r2 = [float(eval_df[eval_df["dataset"] == ds]["r2"].max()) for ds in dataset_order]
+    else:
+        best_validation_r2 = []
     for epoch in range(epoch_start, epochs + 1):
+        breakpoint()
         if epoch > epoch_start:
             epoch_start_time = time.time()
             total_loss= train_epoch(epoch)
@@ -551,7 +558,7 @@ def train(
                     is_best.append(False)
         any_best = np.array(is_best).any()
         # if any_best:
-        if epoch > epoch_start:
+        if epoch > epoch_start or epoch_start == 0:
             save_model_checkpoint(regressor=model, id=ID, epoch=epoch)
         
         new_scheduler_lr = new_scheduler.get_last_lr()[0] if new_scheduler else None
@@ -624,8 +631,14 @@ def main():
 
     # 配置regressor
     model_config['device'] = config['device']
-    if 'layers' in model_config:
-        model_config['layers']['transformer_encoder']['new']['learning_rate'] = config['lr']    
+    if 'layers' in model_config :
+        if model_config['epoch_start'] > 0:
+            assert model_config.get('model_path', None) is not None,\
+                "epoch_start > 0 but model_path is not in the model config"
+            assert model_config['layers']['transformer_encoder']['new'].get('learning_rate', None) is not None, \
+                "epoch_start > 0 but learning_rate is not in the model config"
+        else:
+            model_config['layers']['transformer_encoder']['new']['learning_rate'] = config['lr']    
     regressor, regressor_config = setup_regressor(model_config)
 
 
