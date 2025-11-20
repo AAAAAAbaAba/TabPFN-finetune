@@ -27,12 +27,13 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from functools import partial
 import time
-import os
 import math
 import sys
+import argparse
+from pathlib import Path
 # 添加项目根目录到Python路径
-DIR_PATH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(DIR_PATH)
+DIR_PATH = Path(__file__).resolve().parent.parent
+sys.path.append(str(DIR_PATH))
 from utils.early_stopping import AdaptiveES
 
 
@@ -188,13 +189,13 @@ def prepare_data(config: dict, flag_test: bool, flag_id: bool, data_source: str 
         return X, y
 
 
-def prepare_data_pretrained(config: dict, data_path: str, seq_len: int, batch_num: int = 8) -> tuple[list[np.ndarray], list[np.ndarray]]:
+def prepare_data_pretrained(config: dict, data_path: Path, seq_len: int, batch_num: int = 8) -> tuple[list[np.ndarray], list[np.ndarray]]:
     assert batch_num <= 8, "Max batch_num is 8."
     print("--- 1. Data Preparation ---")
-    folders = [os.path.join(data_path, each_folder) for each_folder in os.listdir(data_path)]
+    folders = [data_path / each_folder for each_folder in data_path.iterdir() if (data_path / each_folder).is_dir()]
     X_pretrained, y_pretrained = [], []
     for i in range(config["finetuning"]["epochs"]):
-        data = [os.path.join(folders[i], each_data) for each_data in os.listdir(folders[i])]
+        data = [folders[i] / each_data for each_data in folders[i].iterdir() if (folders[i] / each_data).is_file()]
         X_all, y_all = [], []
         for j in range(batch_num):
             DATA = pd.read_csv(data[j])
@@ -262,11 +263,10 @@ def evaluate_regressor(regressor: TabPFNRegressor, eval_config: dict, X_train: l
 
 def save_model_checkpoint(regressor: TabPFNRegressor, id: int, epoch: int):
     """Saves the model checkpoint."""
-    ckpt_dir = os.path.join(DIR_PATH,"logs", f"ID_{id}", "ckpt")
-    if not os.path.exists(ckpt_dir):
-        os.makedirs(ckpt_dir)
+    ckpt_dir = DIR_PATH / "logs" / f"ID_{id}" / "ckpt"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
     
-    checkpoint_path = os.path.join(ckpt_dir, f"tabpfn_finetuned-ID_{id}-epoch_{epoch}.ckpt")
+    checkpoint_path = ckpt_dir / f"tabpfn_finetuned-ID_{id}-epoch_{epoch}.ckpt"
     checkpoint = {}
 
     # def make_serializable(config_sample):
@@ -287,13 +287,12 @@ def save_model_checkpoint(regressor: TabPFNRegressor, id: int, epoch: int):
     print(f"💾 Model checkpoint saved to {checkpoint_path}")
 
 
-def setup_logging(config: dict) -> tuple[object, str]:
+def setup_logging(config: dict) -> tuple[Path]:
     """Sets up logging file and returns file object and log directory."""
-    log_dir = os.path.join(DIR_PATH,"logs", f"ID_{config['ID']}")
-    if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
+    log_dir = DIR_PATH / "logs" / f"ID_{config['ID']}"
+    log_dir.mkdir(parents=True, exist_ok=True)
     
-    log_file = os.path.join(log_dir, f"fintuning_log-ID_{config['ID']}.txt")
+    log_file = log_dir / f"fintuning_log-ID_{config['ID']}.txt"
 
     def write_config(config_, subs=0):
         for k, v in config_.items():
@@ -371,7 +370,7 @@ def plot_results(plot_dict: dict, id: int):
     
     plt.tight_layout()
 
-    plt.savefig(os.path.join(DIR_PATH, "logs", f"ID_{id}", f"finetuning_loss-ID_{id}.png"))    
+    plt.savefig(DIR_PATH / "logs" / f"ID_{id}" / f"finetuning_loss-ID_{id}.png")    
 
 
 def save_summary(log_file: str, plot_dict: dict, total_time: list):
@@ -387,8 +386,17 @@ def save_summary(log_file: str, plot_dict: dict, total_time: list):
 
 def main():
     """Main function to configure and run the finetuning workflow."""
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description='Fine-tune TabPFN model with specified config file')
+    parser.add_argument(
+        '--config', 
+        type=Path, 
+        default=DIR_PATH / "examples" / "configs" / "finetune_configs.yaml",
+        help='Path to the YAML configuration file (default: examples/configs/finetune_configs.yaml)'
+    )
+    args = parser.parse_args()
     # --- Master Configuration ---
-    with open(os.path.join(DIR_PATH, "examples/finetune_configs.yaml"), "r") as file:
+    with open(args.config, "r") as file:
         config = yaml.safe_load(file)
     # Sets the computation device ('cuda' for GPU if available, otherwise 'cpu').
     config["device"] = "cuda" if torch.cuda.is_available() else "cpu"

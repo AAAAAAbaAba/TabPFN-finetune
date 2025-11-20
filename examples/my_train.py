@@ -32,12 +32,13 @@ from functools import partial
 from typing import Callable
 from contextlib import nullcontext
 import time
-import os
 import sys
 import csv
+import argparse
+from pathlib import Path
 # 添加项目根目录到Python路径
-DIR_PATH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(DIR_PATH)
+DIR_PATH = Path(__file__).resolve().parent.parent
+sys.path.append(str(DIR_PATH))
 
 
 def create_layered_optimizer(model, layer_lr_config: dict, weight_decay: float = 1e-2) -> torch.optim.Adam:
@@ -225,19 +226,17 @@ def evaluate_regressor(regressor: TabPFNRegressor, eval_config: dict, X_train: l
 
 def save_model_checkpoint(regressor: TabPFNRegressor, id: int, epoch: int):
     """Saves the model checkpoint."""
-    ckpt_dir = os.path.join(DIR_PATH,"logs", f"ID_{id}", "ckpt")
-    if not os.path.exists(ckpt_dir):
-        os.makedirs(ckpt_dir)
-    checkpoint_path = os.path.join(ckpt_dir, f"tabpfn_finetuned-ID_{id}-epoch_{epoch}.ckpt")
+    ckpt_dir = DIR_PATH / "logs" / f"ID_{id}" / "ckpt"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_path = ckpt_dir / f"tabpfn_finetuned-ID_{id}-epoch_{epoch}.ckpt"
     save_tabpfn_model(regressor, checkpoint_path)
     print(f"💾 Model checkpoint saved to {checkpoint_path}")
 
 
-def setup_logging(config: dict) -> tuple[object, str]:
-    """Sets up logging file and returns file object and log directory."""
-    log_dir = os.path.join(DIR_PATH,"logs", f"ID_{config['ID']}")
-    if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
+def setup_logging(config: dict) -> tuple[Path, Path, Path]:
+    """Sets up logging file and returns log directory."""
+    log_dir = DIR_PATH / "logs" / f"ID_{config['ID']}"
+    log_dir.mkdir(parents=True, exist_ok=True)
     
     def write_config(config_, subs=0):
         for k, v in config_.items():
@@ -250,23 +249,23 @@ def setup_logging(config: dict) -> tuple[object, str]:
                 f.write(f"{k}: {v}\n")
     
     # log文件
-    log_file_path = os.path.join(log_dir, f"fintuning_log-ID_{config['ID']}.txt")
-    if not os.path.exists(log_file_path):
+    log_file_path = log_dir / f"fintuning_log-ID_{config['ID']}.txt"
+    if not log_file_path.exists():
         with open(log_file_path, "w") as f:
             f.write("=== Training Configuration ===\n")
             write_config(config)
             f.write("=============================\n\n")
 
     # step loss CSV文件
-    step_loss_csv_path = os.path.join(log_dir, f"step_losses-ID_{config['ID']}.csv")
-    if not os.path.exists(step_loss_csv_path):
+    step_loss_csv_path = log_dir / f"step_losses-ID_{config['ID']}.csv"
+    if not step_loss_csv_path.exists():
         with open(step_loss_csv_path, mode="w", newline="") as csvfile:
             writer = csv.writer(csvfile)
             writer.writerow(["epoch", "step", "loss"])  # header
     
     # evaluate CSV文件
-    eval_csv_path = os.path.join(log_dir, f"eval_metrics-ID_{config['ID']}.csv")
-    if not os.path.exists(eval_csv_path):
+    eval_csv_path = log_dir / f"eval_metrics-ID_{config['ID']}.csv"
+    if not eval_csv_path.exists():
         with open(eval_csv_path, mode="w", newline="") as csvfile:
             writer = csv.writer(csvfile)
             writer.writerow(["epoch", "dataset", "mse", "mae", "r2", "max_ae", "std_error", "is_best", "scheduler_lr"])  # header
@@ -347,7 +346,7 @@ def plot_results(plot_dict: dict, id: int):
     
     plt.tight_layout()
 
-    plt.savefig(os.path.join(DIR_PATH, "logs", f"ID_{id}", f"finetuning_loss-ID_{id}.png"))    
+    plt.savefig(DIR_PATH / "logs" / f"ID_{id}" / f"finetuning_loss-ID_{id}.png")    
 
 
 def save_summary(log_file: str, plot_dict: dict, total_time: list):
@@ -419,7 +418,7 @@ def train(
         scheduler, new_scheduler = None, None
     scaler = GradScaler('cuda') if train_mixed_precision else None
 
-    def train_epoch(epoch: int):
+    def train_epoch(epoch: int) -> float:
         total_loss = 0.0
         step_rows = []
         assert len(dl) % aggregate_k_gradients == 0, \
@@ -522,7 +521,7 @@ def train(
 
     total_loss = float('-inf')
     if epoch_start > 0:
-        eval_csv_path = os.path.join(DIR_PATH, "logs", f"ID_{ID}", f"eval_metrics-ID_{ID}.csv")
+        eval_csv_path = DIR_PATH / "logs" / f"ID_{ID}" / f"eval_metrics-ID_{ID}.csv"
         eval_df = pd.read_csv(eval_csv_path)
         eval_df = eval_df[eval_df["epoch"] < epoch_start]
         dataset_order = eval_df["dataset"].drop_duplicates().tolist()
@@ -533,7 +532,7 @@ def train(
         breakpoint()
         if epoch > epoch_start:
             epoch_start_time = time.time()
-            total_loss= train_epoch(epoch)
+            total_loss = train_epoch(epoch)
 
             print('-' * 100)
             print(f'| end of epoch {epoch:3d} | time: {(time.time() - epoch_start_time):5.2f}s | mean loss {total_loss:5.2f}')
@@ -571,9 +570,17 @@ def train(
 
 def main():
     """Main function to configure and run the training workflow."""
-    # 配置基础config
+    parser = argparse.ArgumentParser(description='Fine-tune TabPFN model with specified config file')
+    parser.add_argument(
+        '--config', 
+        type=Path, 
+        default=DIR_PATH / "examples" / "configs" / "train_configs.yaml",
+        help='Path to the YAML configuration file (default: examples/configs/train_configs.yaml)'
+    )
+    args = parser.parse_args()
+    
     config_prior = get_prior_config_causal()
-    with open(os.path.join(DIR_PATH, "examples/train_configs.yaml"), "r") as file:
+    with open(args.config, "r") as file:
        train_configs = yaml.safe_load(file)
     config = {
         **config_prior,
