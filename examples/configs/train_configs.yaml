@@ -41,7 +41,7 @@ Model:
       # other_layers: 0
       default_lr: 1.5e-6
   epoch_start: 0
-  # model_path: /home/fit/zhangcs/WORK/chenkq/project/ckpt/tabpfn-v2.5-regressor-v2.5_default.ckpt
+  model_path: /home/fit/zhangcs/WORK/chenkq/project/ckpt/tabpfn-v2.5-regressor-v2.5_default.ckpt
   default_model_path: /home/fit/zhangcs/WORK/chenkq/project/ckpt/tabpfn-v2-regressor.ckpt
 
 

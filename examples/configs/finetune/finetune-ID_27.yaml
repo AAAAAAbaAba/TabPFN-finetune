@@ -1,4 +1,4 @@
-ID: test_znorm
+ID: 27
 
 # This improved structure separates general settings from finetuning hyperparameters.
 dataset:
@@ -74,4 +74,4 @@ adptive_es:
   max_patience: 500
 
 # model_path: /home/fit/zhangcs/WORK/chenkq/project/ckpt/tabpfn-v2-regressor.ckpt
-model_path: /home/fit/zhangcs/WORK/chenkq/project/ckpt/tabpfn_finetuned-ID_test_znorm-epoch_26.ckpt
+model_path: /home/fit/zhangcs/WORK/chenkq/project/ckpt/tabpfn-v2-regressor.ckpt

@@ -1,13 +1,13 @@
-ID: test_znorm
+ID: 15
 
 # This improved structure separates general settings from finetuning hyperparameters.
 dataset:
   pretrained:
     data_path: /home/fit/zhangcs/WORK/chenkq/project/dataset/pretrained
-    batch_num: 0
+    batch_num: 4
   openml:
-    source: [/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/topo_2_1_422.csv, /home/fit/zhangcs/WORK/chenkq/project/dataset/openml/yprop_4_1_416.csv]
-    flag_id: [True, True] # False, False, True, True, True, True
+    source: []
+    flag_id: [] # False, False, True, True, True, True
     # 44981[/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/pumadyn32nh_44981.csv], 
     # 44973[/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/grid_stability_44973.csv], 
     # 44978[/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/cpu_activity_44978.csv], 
@@ -51,7 +51,7 @@ n_inference_context_samples: 1_000
 
 finetuning:
   # The total number of passes through the entire fine-tuning dataset.
-  epochs: 200
+  epochs: 50
   # A small learning rate is crucial for fine-tuning to avoid catastrophic forgetting.
   learning_rate: 1.5e-6
   # Meta Batch size for finetuning, i.e. how many datasets per batch. Must be 1 currently.
@@ -74,4 +74,4 @@ adptive_es:
   max_patience: 500
 
 # model_path: /home/fit/zhangcs/WORK/chenkq/project/ckpt/tabpfn-v2-regressor.ckpt
-model_path: /home/fit/zhangcs/WORK/chenkq/project/ckpt/tabpfn_finetuned-ID_test_znorm-epoch_26.ckpt
+model_path: /home/fit/zhangcs/WORK/chenkq/project/ckpt/tabpfn-v2-regressor.ckpt

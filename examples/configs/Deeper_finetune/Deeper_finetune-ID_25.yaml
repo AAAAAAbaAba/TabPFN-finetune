@@ -1,10 +1,10 @@
-ID: test_znorm
+ID: 25
 
 # This improved structure separates general settings from finetuning hyperparameters.
 dataset:
   pretrained:
     data_path: /home/fit/zhangcs/WORK/chenkq/project/dataset/pretrained
-    batch_num: 0
+    batch_num: 4
   openml:
     source: [/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/topo_2_1_422.csv, /home/fit/zhangcs/WORK/chenkq/project/dataset/openml/yprop_4_1_416.csv]
     flag_id: [True, True] # False, False, True, True, True, True
@@ -51,7 +51,7 @@ n_inference_context_samples: 1_000
 
 finetuning:
   # The total number of passes through the entire fine-tuning dataset.
-  epochs: 200
+  epochs: 50
   # A small learning rate is crucial for fine-tuning to avoid catastrophic forgetting.
   learning_rate: 1.5e-6
   # Meta Batch size for finetuning, i.e. how many datasets per batch. Must be 1 currently.

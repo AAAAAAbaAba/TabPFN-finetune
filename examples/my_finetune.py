@@ -29,6 +29,7 @@ from functools import partial
 import time
 import math
 import sys
+import csv
 import argparse
 from pathlib import Path
 # 添加项目根目录到Python路径
@@ -55,13 +56,13 @@ def create_layered_optimizer(model, layer_lr_config: dict) -> torch.optim.Adam:
     transformer_params = {}
     other_params = []
     
-    # 创建层索引到层类别和学习率的映射
+    # 创建层索引到层类别的映射
     transformer_layer_map = {}
     if "transformer_encoder" in layer_lr_config:
         for layer_type, config in layer_lr_config["transformer_encoder"].items():
             transformer_params[layer_type] = []
             for layer_idx in config["layers"]:
-                transformer_layer_map[layer_idx] = {"layer_type": layer_type, "learning_rate": config["learning_rate"]}
+                transformer_layer_map[layer_idx] = {"layer_type": layer_type}
     
     # 分类参数
     layer_pattern = re.compile(r"transformer_encoder\.layers\.(\d+)\.")
@@ -79,6 +80,7 @@ def create_layered_optimizer(model, layer_lr_config: dict) -> torch.optim.Adam:
         temp_params_dict = {
             "params": params,
             "lr": lr,
+            "initial_lr": lr,
             "name": f"transformer_layer_{layer_type}"
         }
         if layer_type == "new":
@@ -92,6 +94,7 @@ def create_layered_optimizer(model, layer_lr_config: dict) -> torch.optim.Adam:
         original_param_groups.append({
             "params": other_params,
             "lr": other_lr,
+            "initial_lr": other_lr,
             "name": "other_layers"
         })
     
@@ -99,7 +102,8 @@ def create_layered_optimizer(model, layer_lr_config: dict) -> torch.optim.Adam:
     if not original_param_groups:
         original_param_groups.append({
             "params": list(model.parameters()), 
-            "lr": layer_lr_config.get("default_lr", 1e-6)
+            "lr": layer_lr_config.get("default_lr", 1e-6),
+            "initial_lr": layer_lr_config.get("default_lr", 1e-6),
         })
     
     original_optimizer = torch.optim.Adam(original_param_groups)
@@ -189,8 +193,9 @@ def prepare_data(config: dict, flag_test: bool, flag_id: bool, data_source: str 
         return X, y
 
 
-def prepare_data_pretrained(config: dict, data_path: Path, seq_len: int, batch_num: int = 8) -> tuple[list[np.ndarray], list[np.ndarray]]:
+def prepare_data_pretrained(config: dict, data_path: str, seq_len: int, batch_num: int = 8) -> tuple[list[np.ndarray], list[np.ndarray]]:
     assert batch_num <= 8, "Max batch_num is 8."
+    data_path = Path(data_path)
     print("--- 1. Data Preparation ---")
     folders = [data_path / each_folder for each_folder in data_path.iterdir() if (data_path / each_folder).is_dir()]
     X_pretrained, y_pretrained = [], []
@@ -227,8 +232,10 @@ def setup_regressor(config: dict) -> tuple[TabPFNRegressor, dict]:
         **regressor_config, fit_mode="batched", differentiable_input=False,
         model_path=config["model_path"]
     )
+    regressor._initialize_model_variables()
 
     print(f"Using device: {config['device']}")
+    print(f"Using a Transformer with {sum(p.numel() for p in regressor.model_.parameters())/1000/1000:.{2}f} M parameters")
     print("----------------------\n")
     return regressor, regressor_config
 
@@ -265,35 +272,16 @@ def save_model_checkpoint(regressor: TabPFNRegressor, id: int, epoch: int):
     """Saves the model checkpoint."""
     ckpt_dir = DIR_PATH / "logs" / f"ID_{id}" / "ckpt"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
-    
     checkpoint_path = ckpt_dir / f"tabpfn_finetuned-ID_{id}-epoch_{epoch}.ckpt"
-    checkpoint = {}
-
-    # def make_serializable(config_sample):
-    #     if isinstance(config_sample, dict):
-    #         config_sample = {k: make_serializable(config_sample[k]) for k in config_sample}
-    #     if isinstance(config_sample, list):
-    #         config_sample = [make_serializable(v) for v in config_sample]
-    #     if callable(config_sample):
-    #         config_sample = str(config_sample)
-    #     return config_sample
-    
-    # checkpoint["state_dict"] = regressor.model_.state_dict()
-    # checkpoint["state_dict"].update({"criterion.borders": regressor.bardist_.borders, 
-    #                                  "criterion.losses_per_bucket": regressor.bardist_.losses_per_bucket})
-    # checkpoint["config"] = make_serializable(regressor.config_)
-    # torch.save(checkpoint, checkpoint_path)
     save_tabpfn_model(regressor, checkpoint_path)
     print(f"💾 Model checkpoint saved to {checkpoint_path}")
 
 
-def setup_logging(config: dict) -> tuple[Path]:
-    """Sets up logging file and returns file object and log directory."""
+def setup_logging(config: dict) -> tuple[Path, Path, Path]:
+    """Sets up logging file and returns log directory."""
     log_dir = DIR_PATH / "logs" / f"ID_{config['ID']}"
     log_dir.mkdir(parents=True, exist_ok=True)
     
-    log_file = log_dir / f"fintuning_log-ID_{config['ID']}.txt"
-
     def write_config(config_, subs=0):
         for k, v in config_.items():
             if isinstance(v, dict):
@@ -304,17 +292,33 @@ def setup_logging(config: dict) -> tuple[Path]:
                 f.write(subs * "  ")
                 f.write(f"{k}: {v}\n")
     
-    # Write config to log file
-    with open(log_file, "w") as f:
-        f.write("=== Training Configuration ===\n")
-        write_config(config)
-        f.write("=============================\n\n")
+    # log文件
+    log_file_path = log_dir / f"fintuning_log-ID_{config['ID']}.txt"
+    if not log_file_path.exists():
+        with open(log_file_path, "w") as f:
+            f.write("=== Training Configuration ===\n")
+            write_config(config)
+            f.write("=============================\n\n")
     
-    return log_file
+    # step loss CSV文件
+    step_loss_csv_path = log_dir / f"step_losses-ID_{config['ID']}.csv"
+    if not step_loss_csv_path.exists():
+        with open(step_loss_csv_path, mode="w", newline="") as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(["epoch", "step", "loss"])  # header
+    
+    # evaluate CSV文件
+    eval_csv_path = log_dir / f"eval_metrics-ID_{config['ID']}.csv"
+    if not eval_csv_path.exists():
+        with open(eval_csv_path, mode="w", newline="") as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(["epoch", "dataset", "mse", "mae", "r2", "max_ae", "std_error", "is_best", "scheduler_lr"])  # header
+    
+    return log_file_path, step_loss_csv_path, eval_csv_path
 
 
-def log_epoch(config: dict, log_file: str, epoch: int, mse: list[float], mae: list[float], r2: list[float], 
-              max_ae: list[float], std_error: list[float], patience_left: int, is_best: list[bool], new_scheduler_lr: float):
+def log_epoch(config: dict, log_file_path: str, eval_csv_path: str, epoch: int, mse: list[float], mae: list[float], r2: list[float], 
+              max_ae: list[float], std_error: list[float], patience_left: int, is_best: list[bool], new_scheduler_lr: float, write_to_file: bool = True):
     """Logs epoch information to file and console."""
     status = "Initial" if epoch == 0 else f"Epoch {epoch}"
     log_entry = f"📊 {status} Evaluation | Patience: {patience_left}"
@@ -327,12 +331,28 @@ def log_epoch(config: dict, log_file: str, epoch: int, mse: list[float], mae: li
             f"Test R2: {r2[idx]:>7.4f}, Test max_AE: {max_ae[idx]:>7.4f}, Test std_ERR: {std_error[idx]:>7.4f} | {best_marker}\n"
         )
     
-    # Write to log file
-    with open(log_file, "a") as f:
-        f.write(log_entry)
-    
-    # Print to console
     print(log_entry)
+    
+    if write_to_file:
+        # write to log file
+        with open(log_file_path, "a") as f:
+            f.write(log_entry)
+        
+        # write to evaluate CSV file
+        with open(eval_csv_path, mode="a", newline="") as csvfile:
+            writer = csv.writer(csvfile)
+            for idx, each_dataset in enumerate(config["dataset"]["evaluate"].keys()):
+                writer.writerow([
+                    epoch, 
+                    each_dataset, 
+                    mse[idx], 
+                    mae[idx], 
+                    r2[idx], 
+                    max_ae[idx], 
+                    std_error[idx], 
+                    is_best[idx], 
+                    new_scheduler_lr
+                ])
 
 
 def plot_results(plot_dict: dict, id: int):
@@ -411,7 +431,7 @@ def main():
     adaptive_es = AdaptiveES(**config["adptive_es"])
 
     # --- Setup logging ---
-    log_file = setup_logging(config)
+    log_file_path, step_loss_csv_path, eval_csv_path = setup_logging(config)
 
     # --- Setup Data, Model, and Dataloader ---
     dataset_evaluate = config["dataset"]["evaluate"]
@@ -515,48 +535,51 @@ def main():
         "initial_validation_loss": 0,
         "epochs": 0,
     }
-    best_validation_loss = [-1 for _ in range(len(dataset_evaluate))]
+    best_validation_loss = [float("-inf") for _ in range(len(dataset_evaluate))]
     start_time = time.time()
     total_time = []
     for epoch in range(config["finetuning"]["epochs"] + 1):
         if epoch > 0:
             plot_dict["epochs"] += 1
             plot_dict["train_loss"].append([])
+            step_rows = []
             # Create a tqdm progress bar to iterate over the dataloader
             assert finetuning_dataloader or finetuning_dataloader_pretrained, "Dataloader!!!"
             len_pb = len(finetuning_dataloader[0]) if finetuning_dataloader else len(finetuning_dataloader_pretrained[0][0])
             progress_bar = tqdm(zip(*finetuning_dataloader, *finetuning_dataloader_pretrained[epoch-1]), 
                                 desc=f"Finetuning Epoch {epoch}", total=len_pb,)
-            for finetuning_dataloader_tuple in progress_bar:
+            for step, finetuning_dataloader_tuple in enumerate(progress_bar):
                 total_loss = None
                 optimizer.zero_grad()
                 new_optimizer.zero_grad() if new_optimizer else None
                 for data_batch in finetuning_dataloader_tuple:              
                     (
-                        X_trains_p,
-                        X_tests_p,
-                        y_trains_p,
-                        y_test_std,
+                        X_trains_preprocessed,
+                        X_tests_preprocessed,
+                        y_trains_znorm,
+                        y_test_znorm,
                         cat_ixs,
                         confs,
-                        norm_bardist,
-                        bardist,
+                        raw_space_bardist_,
+                        znorm_space_bardist_,
                         _,
-                        batch_y_test_raw,
+                        _y_test_raw,
                     ) = data_batch
 
-                    regressor.normalized_bardist_ = norm_bardist[0]
-                    regressor.fit_from_preprocessed(X_trains_p, y_trains_p, cat_ixs, confs)
-                    logits, _, _ = regressor.forward(X_tests_p)
+                    regressor.raw_space_bardist_ = raw_space_bardist_[0]
+                    regressor.znorm_space_bardist_ = znorm_space_bardist_[0]
+                    regressor.fit_from_preprocessed(
+                        X_trains_preprocessed, 
+                        y_trains_znorm, 
+                        cat_ixs, 
+                        confs)
+                    logits, _, _ = regressor.forward(X_tests_preprocessed)
 
                     # For regression, the loss function is part of the preprocessed data
-                    loss_fn = norm_bardist[0]
-                    y_target = y_test_std
-
-                    loss = loss_fn(logits, y_target.to(config["device"]))
+                    loss_fn = raw_space_bardist_[0]
+                    loss = loss_fn(logits, y_test_znorm.to(config["device"]))
                     total_loss = loss if total_loss is None else torch.concatenate((total_loss, loss))
-                    # loss.backward()
-                    # optimizer.step()
+
                 progress_bar.set_postfix({"CUDA Memory": f"{torch.cuda.memory_allocated()/1024**2:.2f} MB"})
                 total_loss = total_loss.mean()
                 total_loss.backward()
@@ -566,10 +589,14 @@ def main():
                 # # Set the postfix of the progress bar to show the current loss
                 # progress_bar.set_postfix(loss=f"{loss.item():.4f}")
                 plot_dict["train_loss"][-1].append(total_loss.item())
+                step_rows.append([epoch, step, total_loss.item()])
             
             scheduler.step() if scheduler else None
             new_scheduler.step() if new_scheduler else None
             plot_dict["train_loss"][-1] = sum(plot_dict["train_loss"][-1]) / len(plot_dict["train_loss"][-1])
+            with open(step_loss_csv_path, mode="a", newline="") as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerows(step_rows)
 
         # Evaluation Step (runs before finetuning and after each epoch)
         mse, mae, r2, max_ae, std_error = evaluate_regressor(regressor, eval_config, X_evaluate_train, y_evaluate_train, X_evaluate_test, y_evaluate_test)
@@ -595,16 +622,20 @@ def main():
 
         patience_left = adaptive_es.remaining_patience(cur_round=epoch)
         new_scheduler_lr = new_scheduler.get_last_lr()[0] if new_scheduler else None
-        log_epoch(config, log_file, epoch, mse, mae, r2, max_ae, std_error, patience_left, is_best, new_scheduler_lr)
+        log_epoch(
+            config, log_file_path, eval_csv_path, 
+            epoch, mse, mae, r2, max_ae, std_error, 
+            patience_left, is_best, new_scheduler_lr,
+        )
         
         if early_stop_no_imp:
-            with open(log_file, "a") as f:
+            with open(log_file_path, "a") as f:
                 f.write("\n⚠️ Early stopping triggered!\n")
             break
 
     print("--- ✅ Finetuning Finished ---")
     plot_results(plot_dict, config["ID"])
-    save_summary(log_file, plot_dict, total_time)
+    save_summary(log_file_path, plot_dict, total_time)
 
 
 if __name__ == "__main__":
