@@ -21,8 +21,6 @@ SynsData:
     differentiable: True
     flexible: True
     recompute_attn: True
-    epochs: 100 # 100
-    num_steps: 1024 # 1024
     num_classes: 0 # for regression
 
 
@@ -30,18 +28,25 @@ Model:
   ID: test
   random_seed: 42
   n_estimators: 2
+  inference_precision: "auto"
   layers:
-      transformer_encoder: 
-        original:
-          layers: [0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16, 17, ]
-        new:
-          layers: [6, 7, 8, 9, 10, 11, ]
-          warmup_steps: 10 # 10
-          # learning_rate: 0.000107375325
-      # other_layers: 0
-      default_lr: 1.5e-6
+    transformer_encoder: 
+      original:
+        indices: [0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16, 17, ]
+      new:
+        indices: [6, 7, 8, 9, 10, 11, ]
+        # lr: 0.000107375325
+    # other_layers: 
+    #   original:
+    #     lr: 1.5e-6
+    warmup_steps: 10 # 10
+    default_lr: 1.5e-6
+  # lr: 1.5e-6
+  epochs: 100 # 100
+  num_steps: 1024 # 1024
+  batch_size: 8
   epoch_start: 0
-  model_path: /home/fit/zhangcs/WORK/chenkq/project/ckpt/tabpfn-v2.5-regressor-v2.5_default.ckpt
+  # model_path: /home/fit/zhangcs/WORK/chenkq/project/ckpt/tabpfn-v2.5-regressor-v2.5_default.ckpt
   default_model_path: /home/fit/zhangcs/WORK/chenkq/project/ckpt/tabpfn-v2-regressor.ckpt
 
 
@@ -50,20 +55,21 @@ Dataset:
   random_seed: 42
   valid_set_ratio: 0.3
   n_inference_context_samples: 1_000
-  evaluate:
+  meta_batch_size: 1
+  evaluation:
     4A:
-      train: "/home/fit/zhangcs/WORK/chenkq/project/dataset/phm2016/PHM2016_4A_train.csv"
-      test: "/home/fit/zhangcs/WORK/chenkq/project/dataset/phm2016/PHM2016_4A_test.csv"
+      train: /home/fit/zhangcs/WORK/chenkq/project/dataset/phm2016/PHM2016_4A_train.csv
+      test: /home/fit/zhangcs/WORK/chenkq/project/dataset/phm2016/PHM2016_4A_test.csv
       flag_id: True
     4B:
-      train: "/home/fit/zhangcs/WORK/chenkq/project/dataset/phm2016/PHM2016_4B_train.csv"
-      test: "/home/fit/zhangcs/WORK/chenkq/project/dataset/phm2016/PHM2016_4B_test.csv"
+      train: /home/fit/zhangcs/WORK/chenkq/project/dataset/phm2016/PHM2016_4B_train.csv
+      test: /home/fit/zhangcs/WORK/chenkq/project/dataset/phm2016/PHM2016_4B_test.csv
       flag_id: True
     zhengqi:
-      train: "/home/fit/zhangcs/WORK/chenkq/project/dataset/zhengqi/zhengqi_train.csv"
-      test: "/home/fit/zhangcs/WORK/chenkq/project/dataset/zhengqi/zhengqi_test.csv"
+      train: /home/fit/zhangcs/WORK/chenkq/project/dataset/zhengqi/zhengqi_train.csv
+      test: /home/fit/zhangcs/WORK/chenkq/project/dataset/zhengqi/zhengqi_test.csv
       flag_id: True
     guangfu:
-      train: "/home/fit/zhangcs/WORK/chenkq/project/dataset/guangfu/guangfu_train.csv"
-      test:  "/home/fit/zhangcs/WORK/chenkq/project/dataset/guangfu/guangfu_test.csv"
+      train: /home/fit/zhangcs/WORK/chenkq/project/dataset/guangfu/guangfu_train.csv
+      test:  /home/fit/zhangcs/WORK/chenkq/project/dataset/guangfu/guangfu_test.csv
       flag_id: True

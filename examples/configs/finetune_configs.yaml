@@ -1,23 +1,62 @@
-ID: test_znorm
+SynsData:
+  basic:
+    bptt_extra_samples: 
+    normalize_with_sqrt: False
+    new_mlp_per_example: True
+    prior_mlp_scale_weights_sqrt: True
+    batch_size_per_gp_sample: 
+    normalize_ignore_label_too: False
+    differentiable_hps_as_style: False
+    max_eval_pos: 1000
+    random_feature_rotation: True
+    rotate_normalized_labels: True
+    canonical_y_encoder: False
+    aggregate_k_gradients: 8
+    total_available_time_in_s: 
+    train_mixed_precision: False
+    efficient_eval_masking: True
 
-# This improved structure separates general settings from finetuning hyperparameters.
-dataset:
-  pretrained:
-    data_path: /home/fit/zhangcs/WORK/chenkq/project/dataset/pretrained
-    batch_num: 0
-  openml:
-    source: [/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/topo_2_1_422.csv, /home/fit/zhangcs/WORK/chenkq/project/dataset/openml/yprop_4_1_416.csv]
-    flag_id: [True, True] # False, False, True, True, True, True
-    # 44981[/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/pumadyn32nh_44981.csv], 
-    # 44973[/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/grid_stability_44973.csv], 
-    # 44978[/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/cpu_activity_44978.csv], 
-    # 44980[/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/kin8nm_44980.csv], 
-    # 422[/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/topo_2_1_422.csv], 
-    # 416[/home/fit/zhangcs/WORK/chenkq/project/dataset/openml/yprop_4_1_416.csv], 
-    name: []  # "pumadyn32nh", "grid_stability", "cpu_activity", "kin8nm", "topo_2_1", "yprop_4_1", 
-    features: []  # 32, 12, 21, 8, 266, 251, 
-    samples: []  # 8192, 10000, 8192, 8192, 8885, 8885
-  evaluate:
+  prior:
+    prior_type: prior_bag
+    differentiable: True
+    flexible: True
+    recompute_attn: True
+    num_classes: 0 # for regression
+
+
+Model:
+  ID: test
+  random_seed: 42
+  n_estimators: 2
+  inference_precision: float32
+  # layers:
+  #   transformer_encoder: 
+  #     original:
+  #       indices: [0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16, 17, ]
+  #     new:
+  #       indices: [6, 7, 8, 9, 10, 11, ]
+  #       # lr: 0.000107375325
+  #   # other_layers: 
+  #   #   original:
+  #   #     lr: 1.5e-6
+  #   warmup_steps: 10 # 10
+  #   default_lr: 1.5e-6
+  lr: 1.5e-6
+  epochs: 50 # 100
+  num_steps: 1024 # 1024
+  batch_size: 4
+  epoch_start: 0
+  # model_path: /home/fit/zhangcs/WORK/chenkq/project/TabPFN-finetune/logs/Deeper_pretrain/ID_test_znorm/ckpt/tabpfn_finetuned-ID_test_znorm-epoch_26.ckpt
+  default_model_path: /home/fit/zhangcs/WORK/chenkq/project/ckpt/tabpfn-v2-regressor.ckpt
+
+
+Dataset:
+  num_samples_to_use: 8_000
+  random_seed: 42
+  valid_set_ratio: 0.3
+  n_inference_context_samples: 1_000
+  meta_batch_size: 1
+  evaluation:
     4A:
       train: /home/fit/zhangcs/WORK/chenkq/project/dataset/phm2016/PHM2016_4A_train.csv
       test: /home/fit/zhangcs/WORK/chenkq/project/dataset/phm2016/PHM2016_4A_test.csv
@@ -34,44 +73,22 @@ dataset:
       train: /home/fit/zhangcs/WORK/chenkq/project/dataset/guangfu/guangfu_train.csv
       test:  /home/fit/zhangcs/WORK/chenkq/project/dataset/guangfu/guangfu_test.csv
       flag_id: True
-
-# The total number of samples to draw from the full dataset. This is useful for
-# managing memory and computation time, especially with large datasets.
-# For very large datasets the entire dataset is preprocessed and then
-# fit in memory, potentially leading to OOM errors.
-num_samples_to_use: 8_000
-# A seed for random number generators to ensure that data shuffling, splitting,
-# and model initializations are reproducible.
-random_seed: 42
-# The proportion of the dataset to allocate to the valid set for final evaluation.
-valid_set_ratio: 0.3
-# During evaluation, this is the number of samples from the training set given to the
-# model as context before it makes predictions on the test set.
-n_inference_context_samples: 1_000
-
-finetuning:
-  # The total number of passes through the entire fine-tuning dataset.
-  epochs: 200
-  # A small learning rate is crucial for fine-tuning to avoid catastrophic forgetting.
-  learning_rate: 1.5e-6
-  # Meta Batch size for finetuning, i.e. how many datasets per batch. Must be 1 currently.
-  meta_batch_size: 1
-  
-  # layered_learning_rate:
-  #   transformer_encoder: 
-  #     original:
-  #       layers: [0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16, 17]
-  #     new:
-  #       layers: [6, 7, 8, 9, 10, 11]
-  #       learning_rate: 1.5e-2
-  #       warmup_steps: 10
-  #   default_lr: 1.5e-6
-
-adptive_es:
-  adaptive_rate: 0.2
-  adaptive_offset: 5
-  min_patience: 500
-  max_patience: 500
-
-# model_path: /home/fit/zhangcs/WORK/chenkq/project/ckpt/tabpfn-v2-regressor.ckpt
-model_path: /home/fit/zhangcs/WORK/chenkq/project/ckpt/tabpfn_finetuned-ID_test_znorm-epoch_26.ckpt
+  real:
+    # 44981:
+    #   train: /home/fit/zhangcs/WORK/chenkq/project/dataset/openml/pumadyn32nh_44981.csv
+    #   flag_id: True
+    # 44973:
+    #   train: /home/fit/zhangcs/WORK/chenkq/project/dataset/openml/grid_stability_44973.csv
+    #   flag_id: True
+    # 44978:
+    #   train: /home/fit/zhangcs/WORK/chenkq/project/dataset/openml/cpu_activity_44978.csv
+    #   flag_id: True
+    # 44980:
+    #   train: /home/fit/zhangcs/WORK/chenkq/project/dataset/openml/kin8nm_44980.csv
+    #   flag_id: True
+    422:
+      train: /home/fit/zhangcs/WORK/chenkq/project/dataset/openml/topo_2_1_422.csv
+      flag_id: True
+    416:
+      train: /home/fit/zhangcs/WORK/chenkq/project/dataset/openml/yprop_4_1_416.csv
+      flag_id: True
