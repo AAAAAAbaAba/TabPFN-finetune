@@ -5,6 +5,37 @@ for the Bike Sharing Demand dataset, model configuration, the fine-tuning loop,
 and performance evaluation for a regression task.
 """
 
+# ========== 编码设置：统一设置 UTF-8 编码 ==========
+import os
+import sys
+import builtins
+import platform
+
+# 设置环境变量，影响标准输入输出
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+
+# 替换内置 open 函数，默认使用 UTF-8 编码（仅在 Windows 上）
+_original_open = builtins.open
+def _open_with_utf8(*args, **kwargs):
+    """包装 open 函数，默认使用 UTF-8 编码（仅在 Windows 上）"""
+    if "encoding" not in kwargs and len(args) > 0:
+        # 检查是否是文本模式（默认或明确指定）
+        mode = kwargs.get("mode", "r" if len(args) == 1 else args[1] if len(args) > 1 else "r")
+        if "b" not in mode:  # 文本模式
+            kwargs["encoding"] = "utf-8"
+    return _original_open(*args, **kwargs)
+
+# 仅在 Windows 上替换 open 函数
+if platform.system().lower() == "windows":
+    builtins.open = _open_with_utf8
+
+# 设置 pandas 默认编码（通过环境变量）
+os.environ.setdefault("PANDAS_ENCODING", "utf-8")
+
+# 包装 pandas.read_csv，默认使用 UTF-8 编码
+_original_read_csv = None  # 将在导入 pandas 后设置
+# ================================================
+
 from functools import partial
 
 import numpy as np
@@ -28,6 +59,21 @@ import train_utils.priors as priors
 
 import yaml
 import pandas as pd
+
+# 包装 pandas.read_csv，默认使用 UTF-8 编码（仅在 Windows 上）
+if platform.system().lower() == "windows":
+    _original_read_csv = pd.read_csv
+    def _read_csv_with_utf8(*args, **kwargs):
+        """包装 pd.read_csv，默认使用 UTF-8 编码"""
+        if "encoding" not in kwargs:
+            kwargs["encoding"] = "utf-8"
+        try:
+            return _original_read_csv(*args, **kwargs)
+        except UnicodeDecodeError:
+            # 如果 UTF-8 失败，尝试自动检测编码
+            kwargs["encoding"] = None
+            return _original_read_csv(*args, **kwargs)
+    pd.read_csv = _read_csv_with_utf8
 from functools import partial
 import itertools
 from typing import Any, Callable, Literal
@@ -310,10 +356,14 @@ def log_epoch(
 
 def init_config() -> tuple[dict, dict, dict]:
     parser = argparse.ArgumentParser(description="Fine-tune TabPFN model with specified config file")
+    if platform.system().lower() == "windows":
+        default_config_path = DIR_PATH / "examples" / "configs" / "Local" / "train_configs.yaml"
+    else:
+        default_config_path = DIR_PATH / "examples" / "configs" / "train_configs.yaml"
     parser.add_argument(
         "--config", 
         type=Path, 
-        default=DIR_PATH / "examples" / "configs" / "train_configs.yaml",
+        default=default_config_path,
         help="Path to the YAML configuration file (default: examples/configs/train_configs.yaml)"
     )
     args = parser.parse_args()

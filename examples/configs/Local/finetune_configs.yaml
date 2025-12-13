@@ -1,0 +1,94 @@
+SynsData:
+  basic:
+    bptt_extra_samples: 
+    normalize_with_sqrt: False
+    new_mlp_per_example: True
+    prior_mlp_scale_weights_sqrt: True
+    batch_size_per_gp_sample: 
+    normalize_ignore_label_too: False
+    differentiable_hps_as_style: False
+    max_eval_pos: 1000
+    random_feature_rotation: True
+    rotate_normalized_labels: True
+    canonical_y_encoder: False
+    aggregate_k_gradients: 8
+    total_available_time_in_s: 
+    train_mixed_precision: False
+    efficient_eval_masking: True
+
+  prior:
+    prior_type: prior_bag
+    differentiable: True
+    flexible: True
+    recompute_attn: True
+    num_classes: 0 # for regression
+
+
+Model:
+  ID: test
+  random_seed: 42
+  n_estimators: 2
+  inference_precision: float32
+  # layers:
+  #   transformer_encoder: 
+  #     original:
+  #       indices: [0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16, 17, ]
+  #     new:
+  #       indices: [6, 7, 8, 9, 10, 11, ]
+  #       # lr: 0.000107375325
+  #   # other_layers: 
+  #   #   original:
+  #   #     lr: 1.5e-6
+  #   warmup_steps: 10 # 10
+  #   default_lr: 1.5e-6
+  lr: 1.5e-6
+  epochs: 50 # 100
+  num_steps: 1024 # 1024
+  batch_size: 4
+  epoch_start: 0
+  model_path: D:/0 Program/TabPFN/ckpt/tabpfn-v2.5-regressor-v2.5_default.ckpt
+  default_model_path: D:/0 Program/TabPFN/ckpt/tabpfn-v2-regressor.ckpt
+
+
+Dataset:
+  num_samples_to_use: 8_000
+  random_seed: 42
+  valid_set_ratio: 0.3
+  n_inference_context_samples: 1_000
+  meta_batch_size: 1
+  evaluation:
+    4A:
+      train: D:/0 Program/TabPFN/非时序数据集/PHM2016_4A_train.csv
+      test: D:/0 Program/TabPFN/非时序数据集/PHM2016_4A_test.csv
+      flag_id: True
+    4B:
+      train: D:/0 Program/TabPFN/非时序数据集/PHM2016_4B_train.csv
+      test: D:/0 Program/TabPFN/非时序数据集/PHM2016_4B_test.csv
+      flag_id: True
+    zhengqi:
+      train: D:/0 Program/TabPFN/非时序数据集/zhengqi_train.csv
+      test: D:/0 Program/TabPFN/非时序数据集/zhengqi_test.csv
+      flag_id: True
+    guangfu:
+      train: D:/0 Program/TabPFN/非时序数据集/guangfu_train.csv
+      test:  D:/0 Program/TabPFN/非时序数据集/guangfu_test.csv
+      flag_id: True
+  real:
+    # 44981:
+    #   train: D:/0 Program/TabPFN/非时序数据集/openml/pumadyn32nh_44981.csv
+    #   flag_id: True
+    # 44973:
+    #   train: D:/0 Program/TabPFN/非时序数据集/openml/grid_stability_44973.csv
+    #   flag_id: True
+    # 44978:
+    #   train: D:/0 Program/TabPFN/非时序数据集/openml/cpu_activity_44978.csv
+    #   flag_id: True
+    # 44980:
+    #   train: D:/0 Program/TabPFN/非时序数据集/openml/kin8nm_44980.csv
+    #   flag_id: True
+    422:
+      train: D:/0 Program/TabPFN/非时序数据集/openml/topo_2_1_422.csv
+      flag_id: True
+    416:
+      train: D:/0 Program/TabPFN/非时序数据集/openml/yprop_4_1_416.csv
+      flag_id: True
