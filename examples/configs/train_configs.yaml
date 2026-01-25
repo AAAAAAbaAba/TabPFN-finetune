@@ -42,7 +42,7 @@ Model:
     warmup_steps: 10 # 10
     default_lr: 1.5e-6
   # lr: 1.5e-6
-  epochs: 100 # 100
+  epochs: 50 # 100
   num_steps: 1024 # 1024
   batch_size: 8
   epoch_start: 0

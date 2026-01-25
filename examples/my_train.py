@@ -607,7 +607,6 @@ def train(
                         _,
                         _y_test_raw,
                     ) = data_batch
-                    breakpoint()
 
                     model.raw_space_bardist_ = raw_space_bardist_[0]
                     model.znorm_space_bardist_ = znorm_space_bardist_[0]
@@ -682,10 +681,14 @@ def train(
     def finetune_epoch(epoch:int) -> float:
         total_loss = 0.0
         step_rows = []
+        assert dl.get_batch_kwargs.get('batch_size') or len(real_dataloader), "Neither batch size of dl nor real_dataloader is set"
         progress_bar = tqdm(
-            zip(dl, *real_dataloader), 
+            zip(*(
+                ([dl] if dl.get_batch_kwargs.get('batch_size', 0) != 0 else []) + 
+                (list(real_dataloader) if real_dataloader else [])
+            )),
             desc=f"Finetuning Epoch {epoch}", 
-            total=len(real_dataloader[0])
+            total=len(real_dataloader[0]) if real_dataloader else len(dl)
         )
         for step, dataloader_tuple in enumerate(progress_bar):
             loss_step = 0.0
@@ -848,7 +851,7 @@ def main():
             prior_config['bptt']), 
             min_len=prior_config.get('min_eval_pos', 1)
         ),
-        lr = model_config.get('layers', model_config['lr']),
+        lr = model_config.get('layers', model_config.get('lr')),
         epoch_start = model_config['epoch_start'],
         epochs = model_config['epochs'],
         train_mixed_precision = prior_config['train_mixed_precision'],
